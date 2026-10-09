@@ -1,49 +1,33 @@
-*==============================================================================
+* =============================================================
 * 04_regressions.do
-*
 * Linear probability models of depression on pension receipt.
-*   Table 2 : controls added step by step
-*   Table 3 : work-related vs. social pensions, by scheme, and eligibility
-*   Table 4 : robustness of the preferred specification (appendix)
-*   Table 5 : heterogeneity by group (appendix)
-*   Figure 1: pension coefficients from the preferred specification
-*
-* The outcome is scaled 0/100, so coefficients are in percentage points.
-* Several respondents are interviewed per household, so standard errors are
-* clustered by household; Table 4 also clusters by village/urban ward.
-*
-* Input : $work/02_analysis.dta
-* Output: $tables/table2_main.tex ... table5_heterogeneity.tex,
-*         $figs/figure1_coefplot.pdf
-*==============================================================================
+* Outcome is depressed x 100, so coefficients are percentage points.
+* Several people are interviewed per household, so standard errors
+* are clustered by household (hhid).
+* =============================================================
 
-use "$work/02_analysis.dta", clear
+use "$work/analysis.dta", clear
 
-*------------------------------------------------------------------------------
-* Control sets (reference groups in comments)
-*------------------------------------------------------------------------------
-local c_demo  "c.age##c.age i.female ib2.hhstruct"   // married, spouse + children
-local c_ses   "i.urban c.schooling ib3.caste i.religion" // rural, OBC, Hindu
-local c_mpce  "i.mpce_quintile"                      // poorest quintile
-local c_state "i.stateid"
-local full    "`c_demo' `c_ses' `c_mpce' `c_state'"
+* --- Control variables ---
+* c. = continuous, i. = categories, ib2. = category 2 is the base group
+* c.age##c.age = age and age squared
+global demo  "c.age##c.age i.female ib2.hhstruct"         // base: married, spouse and children
+global ses   "i.urban c.schooling ib3.dm013 i.religion"   // base: rural, OBC, Hindu
+global mpce  "i.mpce_quintile"                             // base: poorest quintile
+global state "i.stateid"
+global all   "$demo $ses $mpce $state"
 
-*------------------------------------------------------------------------------
-* Table 2: pension receipt and depression, adding controls step by step
-*------------------------------------------------------------------------------
-local spec1 ""
-local spec2 "`c_demo'"
-local spec3 "`c_demo' `c_ses'"
-local spec4 "`c_demo' `c_ses' `c_mpce'"
-local spec5 "`full'"
-
+* -------------------------------------------------------------
+* Table 2: adding controls step by step
+* -------------------------------------------------------------
 eststo clear
-forvalues j = 1/5 {
-    eststo m`j': regress dep_pp any_pen `spec`j'', vce(cluster hh_id)
-}
-assert e(N) == 29627                     // every column uses the same sample
+eststo m1: reg dep100 any_pen, vce(cluster hhid)
+eststo m2: reg dep100 any_pen $demo, vce(cluster hhid)
+eststo m3: reg dep100 any_pen $demo $ses, vce(cluster hhid)
+eststo m4: reg dep100 any_pen $demo $ses $mpce, vce(cluster hhid)
+eststo m5: reg dep100 any_pen $all, vce(cluster hhid)
 
-estadd ysumm : m1 m2 m3 m4 m5            // adds the mean of the outcome
+* Yes/No rows showing which controls each column has
 estadd local demo  "No"  : m1
 estadd local demo  "Yes" : m2 m3 m4 m5
 estadd local ses   "No"  : m1 m2
@@ -52,128 +36,112 @@ estadd local mpce  "No"  : m1 m2 m3
 estadd local mpce  "Yes" : m4 m5
 estadd local state "No"  : m1 m2 m3 m4
 estadd local state "Yes" : m5
+estadd ysumm : m1 m2 m3 m4 m5       // adds the mean of the outcome
 
-esttab m1 m2 m3 m4 m5 using "$tables/table2_main.tex",                     ///
-    replace booktabs label nomtitles keep(any_pen) b(2) se(2)              ///
-    star(* 0.10 ** 0.05 *** 0.01)                                          ///
-    stats(demo ses mpce state ymean N r2,                                  ///
-          fmt(0 0 0 0 2 %9.0fc 3)                                          ///
-          labels("Age, sex, household structure"                           ///
-                 "Urban, schooling, caste, religion"                       ///
-                 "MPCE quintiles" "State fixed effects"                     ///
-                 "Mean of outcome" "Observations" "R-squared"))            ///
-    title("Pension receipt and depression\label{tab:main}")               ///
-    addnotes("Linear probability models. The outcome is depressed (CIDI-SF) x 100,"   ///
+esttab m1 m2 m3 m4 m5 using "$root/output/tables/table2_main.tex", replace ///
+    booktabs label nomtitles keep(any_pen) b(2) se(2)                     ///
+    star(* 0.10 ** 0.05 *** 0.01)                                         ///
+    stats(demo ses mpce state ymean N r2, fmt(0 0 0 0 2 %9.0fc 3)         ///
+          labels("Age, sex, household structure" "Urban, schooling, caste, religion" ///
+                 "MPCE quintiles" "State fixed effects"                   ///
+                 "Mean of outcome" "Observations" "R-squared"))           ///
+    title("Pension receipt and depression\label{tab:main}")              ///
+    addnotes("Linear probability models. The outcome is depressed (CIDI-SF) x 100," ///
              "so coefficients are in percentage points. Standard errors clustered by household.")
 
-*------------------------------------------------------------------------------
-* Table 3: work-related vs. social pensions, by scheme, and eligibility
-*   (1) the two pension types as separate regressors
-*   (2) social pensions split by scheme
-*   (3) adds the BPL/Antyodaya card, the old-age pension's eligibility rule
-*   (4) restricted to households holding a BPL/Antyodaya card
-*------------------------------------------------------------------------------
-eststo t1: regress dep_pp work_pen social_pen `full', vce(cluster hh_id)
-eststo t2: regress dep_pp work_pen oldage_pen widow_pen other_social `full', ///
-           vce(cluster hh_id)
-eststo t3: regress dep_pp work_pen social_pen bpl_card `full', vce(cluster hh_id)
-eststo t4: regress dep_pp work_pen social_pen `full' if bpl_card == 1,      ///
-           vce(cluster hh_id)
+* -------------------------------------------------------------
+* Table 3: work vs. social pensions, and the BPL card
+* -------------------------------------------------------------
+eststo t1: reg dep100 work_pen social_pen $all, vce(cluster hhid)
+eststo t2: reg dep100 work_pen oldage_pen widow_pen other_pen $all, vce(cluster hhid)
+eststo t3: reg dep100 work_pen social_pen bpl $all, vce(cluster hhid)
+eststo t4: reg dep100 work_pen social_pen $all if bpl == 1, vce(cluster hhid)
 estadd ysumm : t1 t2 t3 t4
 
-esttab t1 t2 t3 t4 using "$tables/table3_pension_type.tex",                 ///
-    replace booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)        ///
-    keep(work_pen social_pen oldage_pen widow_pen other_social bpl_card)   ///
-    order(work_pen social_pen oldage_pen widow_pen other_social bpl_card)  ///
-    mtitles("By type" "By scheme" "BPL control" "BPL households")          ///
-    stats(ymean N r2, fmt(2 %9.0fc 3)                                      ///
-          labels("Mean of outcome" "Observations" "R-squared"))            ///
-    title("Work-related and social pensions\label{tab:type}")             ///
-    addnotes("All columns include the controls and state fixed effects of Table 2, column 5."  ///
+esttab t1 t2 t3 t4 using "$root/output/tables/table3_pension_type.tex", replace ///
+    booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)                    ///
+    keep(work_pen social_pen oldage_pen widow_pen other_pen bpl)              ///
+    order(work_pen social_pen oldage_pen widow_pen other_pen bpl)             ///
+    mtitles("By type" "By scheme" "BPL control" "BPL households")             ///
+    stats(ymean N r2, fmt(2 %9.0fc 3) labels("Mean of outcome" "Observations" "R-squared")) ///
+    title("Work-related and social pensions\label{tab:type}")                ///
+    addnotes("All columns include the controls and state fixed effects of Table 2, column 5." ///
              "Outcome x 100. Standard errors clustered by household.")
 
-*------------------------------------------------------------------------------
-* Table 4 (appendix): robustness of the preferred specification
-*   (1) preferred specification (Table 2, column 5)
-*   (2) LASI national survey weights
-*   (3) standard errors clustered by village/urban ward
-*   (4) broader treatment that adds expected work-related pensions
-*   (5) drops MPCE and household structure, which pensions may affect
-*   (6) probit; average marginal effect of pension receipt, x 100
-*------------------------------------------------------------------------------
-eststo r2: regress dep_pp any_pen `full' [pw = indiaindividualweight],      ///
-           vce(cluster hh_id)
-eststo r3: regress dep_pp any_pen `full', vce(cluster ssu_id)
-eststo r4: regress dep_pp any_pen_broad `full', vce(cluster hh_id)
-eststo r5: regress dep_pp any_pen c.age##c.age i.female `c_ses' `c_state',  ///
-           vce(cluster hh_id)
-probit depressed i.any_pen `full', vce(cluster hh_id)
+* -------------------------------------------------------------
+* Table 4 (appendix): robustness checks on the main estimate
+* -------------------------------------------------------------
+* (2) with LASI survey weights
+eststo r2: reg dep100 any_pen $all [pw = indiaindividualweight], vce(cluster hhid)
+* (3) standard errors clustered by village/ward instead of household
+eststo r3: reg dep100 any_pen $all, vce(cluster village)
+* (4) broader pension definition (adds expected work pensions)
+eststo r4: reg dep100 any_pen_broad $all, vce(cluster hhid)
+* (5) without MPCE and household structure, which pensions might affect
+eststo r5: reg dep100 any_pen c.age##c.age i.female $ses $state, vce(cluster hhid)
+* (6) probit instead of OLS; margins gives the average effect of a pension,
+*     multiplied by 100 to match the other columns
+probit depressed i.any_pen $all, vce(cluster hhid)
 eststo r6: margins, dydx(any_pen) expression(100*predict(pr)) post
 
-esttab m5 r2 r3 r4 r5 r6 using "$tables/table4_robustness.tex",             ///
-    replace booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)        ///
-    rename(any_pen_broad any_pen 1.any_pen any_pen)                        ///
-    keep(any_pen)                                                          ///
-    mtitles("Preferred" "Weighted" "Village SE" "Broad" "Lean" "Probit")   ///
-    stats(N, fmt(%9.0fc) labels("Observations"))                           ///
-    title("Robustness of the pension coefficient\label{tab:robust}")      ///
+* rename() puts all six estimates on one row
+esttab m5 r2 r3 r4 r5 r6 using "$root/output/tables/table4_robustness.tex", replace ///
+    booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)        ///
+    rename(any_pen_broad any_pen 1.any_pen any_pen) keep(any_pen)   ///
+    mtitles("Preferred" "Weighted" "Village SE" "Broad" "Lean" "Probit") ///
+    stats(N, fmt(%9.0fc) labels("Observations"))                    ///
+    title("Robustness of the pension coefficient\label{tab:robust}") ///
     addnotes("(1) Table 2, column 5. (2) LASI national weights. (3) Clustered by village/ward." ///
              "(4) Adds expected work-related pensions. (5) Drops MPCE and household structure." ///
              "(6) Probit average marginal effect. Coefficients in percentage points.")
 
-*------------------------------------------------------------------------------
-* Table 5 (appendix): heterogeneity
-*   Each column interacts pension receipt with one group indicator. The
-*   pension row is the association outside the group; the interaction row is
-*   the difference within it, and its t-test is the test of heterogeneity.
-*   Female and urban main effects are already in `full'; the other two groups
-*   need their own main effect.
-*------------------------------------------------------------------------------
-local main_female   ""
-local main_urban    ""
-local main_old70    "old70"
-local main_bpl_card "bpl_card"
+* -------------------------------------------------------------
+* Table 5 (appendix): does the pension estimate differ by group?
+* -------------------------------------------------------------
+* pen_x_group = pension x group. Its coefficient is the extra
+* difference for that group; its p-value tests whether groups differ.
+gen pen_x_group = any_pen * female
+eststo h1: reg dep100 any_pen pen_x_group $all, vce(cluster hhid)
 
-foreach g in female urban old70 bpl_card {
-    capture drop pen_x_group
-    gen byte pen_x_group = any_pen * `g'
-    label variable pen_x_group "Pension x group"
-    eststo h_`g': regress dep_pp any_pen pen_x_group `main_`g'' `full',    ///
-                  vce(cluster hh_id)
-}
+replace pen_x_group = any_pen * urban
+eststo h2: reg dep100 any_pen pen_x_group $all, vce(cluster hhid)
 
-esttab h_female h_urban h_old70 h_bpl_card                                  ///
-    using "$tables/table5_heterogeneity.tex",                              ///
-    replace booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)        ///
-    keep(any_pen pen_x_group)                                              ///
-    mtitles("Women" "Urban" "Aged 70+" "BPL card")                         ///
-    stats(N, fmt(%9.0fc) labels("Observations"))                           ///
-    title("Heterogeneity in the pension coefficient\label{tab:het}")      ///
+gen old70 = (age >= 70)
+replace pen_x_group = any_pen * old70
+eststo h3: reg dep100 any_pen pen_x_group old70 $all, vce(cluster hhid)
+
+replace pen_x_group = any_pen * bpl
+eststo h4: reg dep100 any_pen pen_x_group bpl $all, vce(cluster hhid)
+
+label var pen_x_group "Pension x group"
+
+esttab h1 h2 h3 h4 using "$root/output/tables/table5_heterogeneity.tex", replace ///
+    booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)       ///
+    keep(any_pen pen_x_group)                                      ///
+    mtitles("Women" "Urban" "Aged 70+" "BPL card")                 ///
+    stats(N, fmt(%9.0fc) labels("Observations"))                   ///
+    title("Heterogeneity in the pension coefficient\label{tab:het}") ///
     addnotes("Group in column heading interacted with pension receipt; full controls as in Table 2, column 5.")
-drop pen_x_group                         // kept until here so esttab can use its label
 
-*------------------------------------------------------------------------------
-* Figure 1: pension coefficients from the preferred specification
-*------------------------------------------------------------------------------
-coefplot (m5, keep(any_pen))                                                ///
-         (t2, keep(work_pen oldage_pen widow_pen other_social)),            ///
-    xline(0, lpattern(dash) lcolor(gs8)) nooffsets legend(off)              ///
-    mcolor(black) ciopts(lcolor(black))                                     ///
-    coeflabels(any_pen      = "Any pension"                                 ///
-               work_pen     = "Work-related pension"                        ///
-               oldage_pen   = "National old-age pension"                    ///
-               widow_pen    = "Widow pension"                               ///
-               other_social = "Other social pension")                       ///
-    xtitle("Difference in depression prevalence (percentage points)")       ///
+* -------------------------------------------------------------
+* Figure 1: pension estimates with 95% confidence intervals
+* -------------------------------------------------------------
+coefplot (m5, keep(any_pen)) (t2, keep(work_pen oldage_pen widow_pen other_pen)), ///
+    xline(0, lpattern(dash) lcolor(gs8)) nooffsets legend(off)        ///
+    mcolor(black) ciopts(lcolor(black))                                ///
+    coeflabels(any_pen = "Any pension" work_pen = "Work-related pension" ///
+               oldage_pen = "National old-age pension"                ///
+               widow_pen = "Widow pension" other_pen = "Other social pension") ///
+    xtitle("Difference in depression prevalence (percentage points)") ///
     graphregion(color(white))
-graph export "$figs/figure1_coefplot.pdf", replace
+graph export "$root/output/figures/figure1_coefplot.pdf", replace
 
-*------------------------------------------------------------------------------
-* Numbers quoted in the text: estimates with 95% confidence intervals
-*------------------------------------------------------------------------------
-estimates restore m5
-lincom any_pen                           // preferred estimate
-estimates restore t1
+* -------------------------------------------------------------
+* Numbers quoted in the paper (estimates and 95% confidence intervals)
+* -------------------------------------------------------------
+est restore m5
+lincom any_pen
+est restore t1
 lincom work_pen
 lincom social_pen
-lincom work_pen - social_pen             // do the two pension types differ?
+lincom work_pen - social_pen     // are the two pension types different?

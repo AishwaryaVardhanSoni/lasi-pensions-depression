@@ -1,61 +1,42 @@
-*==============================================================================
+* =============================================================
 * master.do
+* Pension receipt and depression among older adults in India
+* Data: LASI Wave 1 (2017-18)
+* Author: Aishwarya Vardhan Soni
 *
-* Project : Pension Receipt and Depression among Older Adults in India
-* Data    : Longitudinal Ageing Study in India (LASI), Wave 1 (2017-18)
-* Author  : Aishwarya Vardhan Soni
+* Running this file runs the whole project: it cleans the raw
+* data and makes every table and the figure in the paper.
 *
-* Runs the full pipeline, from the raw LASI files to every table and figure
-* in the paper. To replicate, edit the paths in Section 1 and run this file.
-* Data access and software requirements are described in README.md.
-*==============================================================================
+* Before running:
+*  1. Change the three folder paths below.
+*  2. Install two packages (only needed once):
+*       ssc install estout
+*       ssc install coefplot
+* =============================================================
 
 clear all
 set more off
-set varabbrev off
 version 17
 
-*------------------------------------------------------------------------------
-* 1. Paths (the only lines a new user needs to edit)
-*------------------------------------------------------------------------------
-global root "D:/Predoc_files/lasi-pensions-depression"    // this repository
-global raw  "D:/Predoc_files/data/LASI"                   // raw LASI files (read-only)
-global work "D:/Predoc_files/data/work"                   // intermediate data (not in repo)
+* --- Folder paths ---
+global root "D:/Predoc_files/lasi-pensions-depression"   // project folder
+global raw  "D:/Predoc_files/data/LASI"                  // raw LASI data (never edited)
+global work "D:/Predoc_files/data/work"                  // cleaned data
 
-global indfile "$raw/3_LASI_W1_Individual_data.dta"
-global hhfile  "$raw/2_LASI_W1_Household_data.dta"
+* Create the output folders if they don't exist yet
+cap mkdir "$work"
+cap mkdir "$root/output"
+cap mkdir "$root/output/tables"
+cap mkdir "$root/output/figures"
+cap mkdir "$root/output/logs"
 
-*------------------------------------------------------------------------------
-* 2. Output folders
-*------------------------------------------------------------------------------
-global code   "$root/code"
-global tables "$root/output/tables"
-global figs   "$root/output/figures"
-global logs   "$root/output/logs"
+* --- Run the project ---
+cap log close
+log using "$root/output/logs/master.log", replace text
 
-foreach folder in "$work" "$root/output" "$tables" "$figs" "$logs" {
-    capture mkdir "`folder'"
-}
-
-*------------------------------------------------------------------------------
-* 3. User-written packages (installed only if missing)
-*------------------------------------------------------------------------------
-foreach pkg in estout coefplot {
-    capture which `pkg'
-    if _rc {
-        ssc install `pkg', replace
-    }
-}
-
-*------------------------------------------------------------------------------
-* 4. Pipeline
-*------------------------------------------------------------------------------
-capture log close
-log using "$logs/master.log", replace text
-
-do "$code/01_sample.do"         // raw individual file -> respondents aged 60+
-do "$code/02_variables.do"      // outcome, pensions, controls, estimation sample
-do "$code/03_descriptives.do"   // Table 1
-do "$code/04_regressions.do"    // Tables 2-5 and Figure 1
+do "$root/code/01_sample.do"        // load data, keep people aged 60+
+do "$root/code/02_variables.do"     // make outcome, pension and control variables
+do "$root/code/03_descriptives.do"  // Table 1
+do "$root/code/04_regressions.do"   // Tables 2-5 and Figure 1
 
 log close
