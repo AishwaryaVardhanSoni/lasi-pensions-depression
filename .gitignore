@@ -1,0 +1,12 @@
+# LASI data are available only through IIPS and must not be committed
+*.dta
+*.csv
+
+# Scratch files and Stata's default log format
+scratch*.do
+*.smcl
+
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+.Rhistory

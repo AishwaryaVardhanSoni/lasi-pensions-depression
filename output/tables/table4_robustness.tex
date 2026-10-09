@@ -1,0 +1,20 @@
+\begin{table}[htbp]\centering
+\def\sym#1{\ifmmode^{#1}\else\(^{#1}\)\fi}
+\caption{Robustness of the pension coefficient\label{tab:robust}}
+\begin{tabular}{l*{6}{c}}
+\toprule
+                    &\multicolumn{1}{c}{(1)}&\multicolumn{1}{c}{(2)}&\multicolumn{1}{c}{(3)}&\multicolumn{1}{c}{(4)}&\multicolumn{1}{c}{(5)}&\multicolumn{1}{c}{(6)}\\
+                    &\multicolumn{1}{c}{Preferred}&\multicolumn{1}{c}{Weighted}&\multicolumn{1}{c}{Village SE}&\multicolumn{1}{c}{Broad}&\multicolumn{1}{c}{Lean}&\multicolumn{1}{c}{Probit}\\
+\midrule
+Receives any pension&        0.55         &        1.68\sym{***}&        0.55         &        0.51         &        0.85\sym{**} &        0.46         \\
+                    &      (0.35)         &      (0.62)         &      (0.36)         &      (0.34)         &      (0.35)         &      (0.34)         \\
+\midrule
+Observations        &      29,627         &      29,627         &      29,627         &      29,627         &      29,627         &      29,627         \\
+\bottomrule
+\multicolumn{7}{l}{\footnotesize Standard errors in parentheses}\\
+\multicolumn{7}{l}{\footnotesize (1) Table 2, column 5. (2) LASI national weights. (3) Clustered by village/ward.}\\
+\multicolumn{7}{l}{\footnotesize (4) Adds expected work-related pensions. (5) Drops MPCE and household structure.}\\
+\multicolumn{7}{l}{\footnotesize (6) Probit average marginal effect. Coefficients in percentage points.}\\
+\multicolumn{7}{l}{\footnotesize \sym{*} \(p<0.10\), \sym{**} \(p<0.05\), \sym{***} \(p<0.01\)}\\
+\end{tabular}
+\end{table}

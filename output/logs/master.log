@@ -1,0 +1,2228 @@
+-------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  D:/Predoc_files/lasi-pensions-depression/output/logs/master.log
+  log type:  text
+ opened on:  10 Oct 2026, 01:15:50
+
+. 
+. do "$code/01_sample.do"         // raw individual file -> respondents aged 60+
+
+. *==============================================================================
+. * 01_sample.do
+. *
+. * Loads the variables used in the analysis from the LASI Wave 1 individual
+. * file and restricts the data to respondents aged 60 and above, the population
+. * covered by LASI's social-pension module (SW201-SW213).
+. *
+. * Input : $indfile
+. * Output: $work/01_sample.dta
+. *==============================================================================
+. 
+. *------------------------------------------------------------------------------
+. * 1. Load only the variables used in the analysis
+. *------------------------------------------------------------------------------
+. use prim_key hhid stateid residence living_arrangements mpce_quintile       ///
+>     indiaindividualweight                                                  ///
+>     dm003 dm005 dm006 dm007 dm010 dm013 dm021                              ///
+>     we412                                                                  ///
+>     sw202a sw202b sw202d sw202e                                            ///
+>     mh201 mh202 mh203 mh204 mh205 mh206 mh207 mh208 mh209 mh210 mh211      ///
+>     mh214 mh215 mh216 mh217 mh218 mh219 mh220 mh221 mh222                  ///
+>     using "$indfile", clear
+
+. 
+. assert _N == 72250                       // all Wave 1 respondents
+
+. isid prim_key                            // one row per respondent
+
+. 
+. *------------------------------------------------------------------------------
+. * 2. Restrict to respondents aged 60+
+. *    Stata treats missing values as larger than any number, so the explicit
+. *    !missing() condition is required.
+. *------------------------------------------------------------------------------
+. keep if dm005 >= 60 & !missing(dm005)
+(40,786 observations deleted)
+
+. assert _N == 31464                       // matches the LASI Data User Guide
+
+. 
+. * Every respondent aged 60+ has a national individual weight
+. assert !missing(indiaindividualweight)
+
+. 
+. compress
+  (0 bytes saved)
+
+. save "$work/01_sample.dta", replace
+file D:/Predoc_files/data/work/01_sample.dta saved
+
+. 
+end of do-file
+
+. do "$code/02_variables.do"      // outcome, pensions, controls, estimation sample
+
+. *==============================================================================
+. * 02_variables.do
+. *
+. * Constructs the outcome (probable major depression, CIDI-SF), the pension
+. * measures and the controls; merges ration-card type from the household file;
+. * and defines the estimation sample.
+. *
+. * Input : $work/01_sample.dta, $hhfile
+. * Output: $work/02_analysis.dta
+. *==============================================================================
+. 
+. use "$work/01_sample.dta", clear
+
+. 
+. *------------------------------------------------------------------------------
+. * 1. Outcome: probable major depression (CIDI-SF)
+. *
+. * LASI administers the CIDI-SF through two screening pathways:
+. *   Depressed mood   - screen MH201. The seven symptom items MH204-MH211 are
+. *                      asked only if the episode lasted most of the day
+. *                      (MH202) nearly every day (MH203 = 1 or 2).
+. *   Loss of interest - screen MH214. The six symptom items MH217-MH222 are
+. *                      asked only under the analogous criteria (MH215-MH216).
+. * A respondent is classified as depressed if either pathway records three or
+. * more symptoms. A skipped symptom item counts as absent, because the skip
+. * means the screening criteria were not met. Respondents never administered
+. * the module (both screens missing, most likely proxy interviews) are coded
+. * missing rather than "not depressed".
+. *------------------------------------------------------------------------------
+. 
+. * The skip pattern described above holds in the data, with one exception:
+. * a single respondent answers MH217 although the MH216 screen was not met.
+. * That record is harmless (it would change the classification only if it
+. * alone lifted the respondent to three symptoms), so it is tolerated here.
+. count if !missing(mh204) & !inlist(mh203, 1, 2)
+  0
+
+. assert r(N) == 0
+
+. count if !missing(mh217) & !inlist(mh216, 1, 2)
+  1
+
+. assert r(N) <= 1
+
+. 
+. * Depressed-mood pathway: seven symptoms (appetite loss or gain counts once).
+. * (x == 1) equals 0 when x is missing, so skipped items count as absent.
+. foreach q in mh204 mh205 mh208 mh209 mh210 mh211 {
+  2.     gen byte sym_`q' = (`q' == 1)
+  3. }
+
+. gen byte sym_appetite = (mh206 == 1 | mh207 == 1)
+
+. egen byte n_mood = rowtotal(sym_mh204 sym_mh205 sym_appetite sym_mh208    ///
+>                             sym_mh209 sym_mh210 sym_mh211)
+
+. 
+. * Loss-of-interest pathway: six symptoms
+. foreach q in mh217 mh218 mh219 mh220 mh221 mh222 {
+  2.     gen byte sym_`q' = (`q' == 1)
+  3. }
+
+. egen byte n_interest = rowtotal(sym_mh217 sym_mh218 sym_mh219 sym_mh220   ///
+>                                 sym_mh221 sym_mh222)
+
+. 
+. * The module was administered if at least one screening question was answered
+. gen byte cidi_module = !missing(mh201) | !missing(mh214)
+
+. count if cidi_module == 0
+  818
+
+. assert r(N) == 818
+
+. 
+. gen byte depressed = (max(n_mood, n_interest) >= 3) if cidi_module == 1
+(818 missing values generated)
+
+. gen dep_pp = 100 * depressed             // outcome in percentage points
+(818 missing values generated)
+
+. 
+. count if !missing(depressed)
+  30,646
+
+. assert r(N) == 30646
+
+. count if depressed == 1
+  2,317
+
+. assert r(N) == 2317
+
+. 
+. drop sym_*
+
+. 
+. *------------------------------------------------------------------------------
+. * 2. Pension receipt
+. *
+. * Work-related pensions (WE412) are asked only of respondents who work in, or
+. * retired from, the organized sector (WE004 = 1 or WE402 = 1); respondents not
+. * asked have no work-related pension.
+. *   WE412: 1 = currently receiving, 2 = expected in future, 3 = neither.
+. * Social pensions (SW202, "availing the benefits") are asked scheme by scheme
+. * of respondents aged 60+ who are aware of the scheme (SW201 = 1); respondents
+. * unaware of a scheme are not receiving it.
+. *   a = National Old Age Pension Scheme (requires a BPL household),
+. *   b = widow pension (asked of women only), d and e = other pension schemes.
+. *   Scheme c (Annapurna) provides food grains rather than cash and is excluded.
+. *------------------------------------------------------------------------------
+. gen byte work_pen     = (we412 == 1)
+
+. gen byte work_pen_exp = (we412 == 2)
+
+. gen byte oldage_pen   = (sw202a == 1)
+
+. gen byte widow_pen    = (sw202b == 1)
+
+. gen byte other_social = (sw202d == 1 | sw202e == 1)
+
+. gen byte social_pen   = (oldage_pen == 1 | widow_pen == 1 | other_social == 1)
+
+. 
+. * Main treatment: currently receives any pension
+. gen byte any_pen = (work_pen == 1 | social_pen == 1)
+
+. 
+. * Broader definition (robustness only): adds respondents expecting a
+. * work-related pension in future, who receive no pension income yet
+. gen byte any_pen_broad = (any_pen == 1 | work_pen_exp == 1)
+
+. 
+. count if work_pen == 1
+  2,196
+
+. assert r(N) == 2196
+
+. count if work_pen_exp == 1
+  365
+
+. assert r(N) == 365
+
+. 
+. *------------------------------------------------------------------------------
+. * 3. Controls
+. *------------------------------------------------------------------------------
+. gen age          = dm005
+
+. gen byte old70   = (age >= 70)
+
+. gen byte female  = (dm003 == 2)
+
+. gen byte urban   = (residence == 2)
+
+. 
+. * Years of schooling; respondents who never attended school (DM006 = 2) have 0
+. gen schooling = cond(dm006 == 2, 0, dm007)
+
+. assert !missing(schooling)
+
+. 
+. * Household structure. Marital status (DM021) and living arrangements are
+. * nearly collinear - no widowed respondent lives with a spouse - so they
+. * enter the regressions as one combined variable.
+. *   DM021: 1 = currently married, 2 = widowed, 3-7 = divorced, separated,
+. *          deserted, live-in relationship, never married.
+. *   living_arrangements: 1 = alone, 2 = spouse only, 3 = spouse and children,
+. *          4 = children only, 5 = others only.
+. gen byte hhstruct = .
+(31,464 missing values generated)
+
+. replace  hhstruct = 1 if dm021 == 1 & living_arrangements == 2
+(6,215 real changes made)
+
+. replace  hhstruct = 2 if dm021 == 1 & living_arrangements == 3
+(13,465 real changes made)
+
+. replace  hhstruct = 3 if dm021 == 1 & inlist(living_arrangements, 1, 4, 5)
+(240 real changes made)
+
+. replace  hhstruct = 4 if dm021 == 2 & living_arrangements == 1
+(1,428 real changes made)
+
+. replace  hhstruct = 5 if dm021 == 2 & living_arrangements == 4
+(8,003 real changes made)
+
+. replace  hhstruct = 6 if dm021 == 2 & living_arrangements == 5
+(1,288 real changes made)
+
+. replace  hhstruct = 7 if inrange(dm021, 3, 7)
+(825 real changes made)
+
+. assert !missing(hhstruct)
+
+. label define hhstruct_lbl                                                 ///
+>     1 "Married, with spouse only"                                         ///
+>     2 "Married, with spouse and children"                                 ///
+>     3 "Married, spouse not co-resident"                                   ///
+>     4 "Widowed, alone"                                                    ///
+>     5 "Widowed, with children"                                            ///
+>     6 "Widowed, with others"                                              ///
+>     7 "Other unmarried"
+
+. label values hhstruct hhstruct_lbl
+
+. 
+. * Simple indicators for the descriptive table
+. gen byte widowed      = (dm021 == 2)
+
+. gen byte living_alone = (living_arrangements == 1)
+
+. 
+. * Caste (DM013); OBC is the reference group in the regressions
+. gen byte caste = dm013
+(1,047 missing values generated)
+
+. label define caste_lbl 1 "Scheduled Caste" 2 "Scheduled Tribe" 3 "OBC"   ///
+>                        4 "None of these"
+
+. label values caste caste_lbl
+
+. gen byte sc = (caste == 1) if !missing(caste)
+(1,047 missing values generated)
+
+. gen byte st = (caste == 2) if !missing(caste)
+(1,047 missing values generated)
+
+. 
+. * Religion (DM010), collapsed. Categories with very few respondents (for
+. * example, two Jewish and two Parsi respondents aged 60+) are grouped as Other.
+. recode dm010 (2 = 1 "Hindu") (3 = 2 "Muslim") (4 = 3 "Christian")        ///
+>              (5 = 4 "Sikh") (1 6/10 = 5 "Other"), gen(religion)
+(31463 differences between dm010 and religion)
+
+. 
+. * Consumption: bottom two MPCE quintiles (descriptive table only)
+. gen byte mpce_bottom2 = inlist(mpce_quintile, 1, 2)
+
+. 
+. *------------------------------------------------------------------------------
+. * 4. Identifiers for clustering
+. *    hhid has 15 digits: wave (1), state (2), secondary sampling unit, i.e.
+. *    village or urban ward (4), household structure (4), household (2), and
+. *    member (2, always 00 at the household level). It is stored as a string
+. *    so that it merges cleanly with the household file.
+. *------------------------------------------------------------------------------
+. capture confirm numeric variable hhid
+
+. if !_rc {
+.     tostring hhid, replace format(%15.0f)
+. }
+
+. assert strlen(hhid) == 15
+
+. 
+. egen long hh_id  = group(hhid)                  // household
+
+. gen str7 ssu     = substr(hhid, 1, 7)           // wave + state + village/ward
+
+. egen long ssu_id = group(ssu)
+
+. 
+. *------------------------------------------------------------------------------
+. * 5. Ration-card type from the household file (CO301-CO302)
+. *    The National Old Age Pension requires a below-poverty-line (BPL)
+. *    household; Antyodaya cards go to the poorest BPL households.
+. *------------------------------------------------------------------------------
+. preserve
+
+.     use hhid co301 co302 using "$hhfile", clear
+
+.     capture confirm numeric variable hhid
+
+.     if !_rc {
+.         tostring hhid, replace format(%15.0f)
+.     }
+
+.     isid hhid
+
+.     tempfile hh
+
+.     save `hh'
+file C:\Users\HP\AppData\Local\Temp\ST_7bd0_000002.tmp saved as .dta format
+
+. restore
+
+. 
+. merge m:1 hhid using `hh', keep(master match)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                           576
+        from master                       576  (_merge==1)
+        from using                          0  (_merge==2)
+
+    Matched                            30,888  (_merge==3)
+    -----------------------------------------
+
+. tab _merge
+
+   Matching result from |
+                  merge |      Freq.     Percent        Cum.
+------------------------+-----------------------------------
+        Master only (1) |        576        1.83        1.83
+            Matched (3) |     30,888       98.17      100.00
+------------------------+-----------------------------------
+                  Total |     31,464      100.00
+
+. drop _merge
+
+. 
+. gen byte bpl_card = .
+(31,464 missing values generated)
+
+. replace  bpl_card = 1 if co301 == 1 & inlist(co302, 1, 2)
+(16,080 real changes made)
+
+. replace  bpl_card = 0 if co301 == 2 | (co301 == 1 & inlist(co302, 3, 4))
+(14,615 real changes made)
+
+. tab bpl_card, missing
+
+   bpl_card |      Freq.     Percent        Cum.
+------------+-----------------------------------
+          0 |     14,615       46.45       46.45
+          1 |     16,080       51.11       97.56
+          . |        769        2.44      100.00
+------------+-----------------------------------
+      Total |     31,464      100.00
+
+. 
+. *------------------------------------------------------------------------------
+. * 6. Estimation sample: complete data on the outcome and all controls
+. *    31,464 aged 60+ -> less 818 without the depression module
+. *    -> less 1,018 with missing caste -> less 1 with missing religion
+. *    = 29,627 respondents
+. *------------------------------------------------------------------------------
+. keep if !missing(depressed, age, female, hhstruct, urban, schooling,      ///
+>                  caste, religion, mpce_quintile, stateid)
+(1,837 observations deleted)
+
+. assert _N == 29627
+
+. 
+. *------------------------------------------------------------------------------
+. * 7. Labels (esttab uses them as table row names)
+. *------------------------------------------------------------------------------
+. label variable depressed     "Depressed (CIDI-SF)"
+
+. label variable dep_pp        "Depressed (CIDI-SF) x 100"
+
+. label variable any_pen       "Receives any pension"
+
+. label variable any_pen_broad "Receives or expects any pension"
+
+. label variable work_pen      "Work-related pension"
+
+. label variable work_pen_exp  "Expects work-related pension"
+
+. label variable social_pen    "Social pension"
+
+. label variable oldage_pen    "National old-age pension"
+
+. label variable widow_pen     "Widow pension"
+
+. label variable other_social  "Other social pension"
+
+. label variable age           "Age (years)"
+
+. label variable old70         "Aged 70+"
+
+. label variable female        "Female"
+
+. label variable widowed       "Widowed"
+
+. label variable living_alone  "Lives alone"
+
+. label variable urban         "Urban"
+
+. label variable schooling     "Years of schooling"
+
+. label variable sc            "Scheduled Caste"
+
+. label variable st            "Scheduled Tribe"
+
+. label variable bpl_card      "BPL or Antyodaya card"
+
+. label variable mpce_bottom2  "Bottom two MPCE quintiles"
+
+. label variable hhstruct      "Household structure"
+
+. label variable caste         "Caste"
+
+. label variable religion      "Religion"
+
+. 
+. compress
+  variable dep_pp was float now byte
+  variable age was float now int
+  variable schooling was float now byte
+  variable hh_id was long now int
+  variable ssu_id was long now int
+  (355,524 bytes saved)
+
+. save "$work/02_analysis.dta", replace
+file D:/Predoc_files/data/work/02_analysis.dta saved
+
+. 
+end of do-file
+
+. do "$code/03_descriptives.do"   // Table 1
+
+. *==============================================================================
+. * 03_descriptives.do
+. *
+. * Table 1: characteristics of the estimation sample by pension status.
+. * Means are weighted by LASI national individual weights; observation counts
+. * are unweighted. The work- and social-pension columns overlap for the few
+. * respondents who receive both.
+. *
+. * Input : $work/02_analysis.dta
+. * Output: $tables/table1_descriptives.tex
+. *==============================================================================
+. 
+. use "$work/02_analysis.dta", clear
+
+. 
+. local rows depressed any_pen work_pen social_pen age female widowed         ///
+>            living_alone urban schooling sc st bpl_card mpce_bottom2
+
+. 
+. eststo clear
+
+. eststo d_all:    estpost summarize `rows' [aw = indiaindividualweight]
+
+             |  e(count)   e(sum_w)    e(mean)     e(Var)      e(sd)     e(min)     e(max)     e(sum) 
+-------------+----------------------------------------------------------------------------------------
+   depressed |     29627   1.13e+08   .0920731   .0835985    .289134          0          1   1.04e+07 
+     any_pen |     29627   1.13e+08     .34661   .2264791   .4758983          0          1   3.90e+07 
+    work_pen |     29627   1.13e+08   .0569976   .0537507   .2318419          0          1    6420119 
+  social_pen |     29627   1.13e+08   .2919244   .2067115   .4546554          0          1   3.29e+07 
+         age |     29627   1.13e+08   68.99339   54.57545    7.38752         60        116   7.77e+09 
+      female |     29627   1.13e+08   .5272218   .2492674   .4992669          0          1   5.94e+07 
+     widowed |     29627   1.13e+08    .359284   .2302068   .4797987          0          1   4.05e+07 
+living_alone |     29627   1.13e+08   .0569587   .0537162   .2317675          0          1    6415734 
+       urban |     29627   1.13e+08   .2876645   .2049205   .4526815          0          1   3.24e+07 
+   schooling |     29627   1.13e+08   3.253134   20.65005   4.544232          0         26   3.66e+08 
+          sc |     29627   1.13e+08   .1951335   .1570617   .3963101          0          1   2.20e+07 
+          st |     29627   1.13e+08   .0827436   .0758997    .275499          0          1    9320113 
+    bpl_card |     28948   1.10e+08   .5349972   .2487838   .4987823          0          1   5.87e+07 
+mpce_bottom2 |     29627   1.13e+08    .435166   .2458049   .4957871          0          1   4.90e+07 
+
+. eststo d_nopen:  estpost summarize `rows' if any_pen == 0    [aw = indiaindividualweight]
+
+             |  e(count)   e(sum_w)    e(mean)     e(Var)      e(sd)     e(min)     e(max)     e(sum) 
+-------------+----------------------------------------------------------------------------------------
+   depressed |     18118   7.36e+07   .0879547   .0802231   .2832368          0          1    6473184 
+     any_pen |     18118   7.36e+07          0          0          0          0          0          0 
+    work_pen |     18118   7.36e+07          0          0          0          0          0          0 
+  social_pen |     18118   7.36e+07          0          0          0          0          0          0 
+         age |     18118   7.36e+07   68.22113   53.00446   7.280416         60        116   5.02e+09 
+      female |     18118   7.36e+07   .5344835   .2488246   .4988232          0          1   3.93e+07 
+     widowed |     18118   7.36e+07   .3118299   .2146039   .4632536          0          1   2.29e+07 
+living_alone |     18118   7.36e+07   .0429227   .0410826   .2026885          0          1    3158977 
+       urban |     18118   7.36e+07   .3094331    .213696   .4622727          0          1   2.28e+07 
+   schooling |     18118   7.36e+07   3.393372   20.00658   4.472872          0         23   2.50e+08 
+          sc |     18118   7.36e+07   .1764476   .1453219    .381211          0          1   1.30e+07 
+          st |     18118   7.36e+07   .0757808    .070042   .2646544          0          1    5577229 
+    bpl_card |     17707   7.15e+07   .5039151   .2499988   .4999988          0          1   3.60e+07 
+mpce_bottom2 |     18118   7.36e+07   .4276009   .2447719   .4947443          0          1   3.15e+07 
+
+. eststo d_work:   estpost summarize `rows' if work_pen == 1   [aw = indiaindividualweight]
+
+             |  e(count)   e(sum_w)    e(mean)     e(Var)      e(sd)     e(min)     e(max)     e(sum) 
+-------------+----------------------------------------------------------------------------------------
+   depressed |      2057    6420119   .0703854   .0654631   .2558576          0          1   451882.6 
+     any_pen |      2057    6420119          1          0          0          1          1    6420119 
+    work_pen |      2057    6420119          1          0          0          1          1    6420119 
+  social_pen |      2057    6420119   .0405637   .0389372    .197325          0          1   260423.5 
+         age |      2057    6420119   69.92155   49.41944   7.029896         60         95   4.49e+08 
+      female |      2057    6420119   .1205662   .1060816   .3257016          0          1   774049.3 
+     widowed |      2057    6420119   .1882018   .1528562   .3909683          0          1    1208278 
+living_alone |      2057    6420119    .040891    .039238   .1980859          0          1   262525.3 
+       urban |      2057    6420119   .5475804   .2478566    .497852          0          1    3515531 
+   schooling |      2057    6420119   10.25976   24.41533   4.941187          0         26   6.59e+07 
+          sc |      2057    6420119   .1440124   .1233328   .3511877          0          1   924576.7 
+          st |      2057    6420119   .0511277   .0485373   .2203117          0          1     328246 
+    bpl_card |      2008    6268465    .212949   .1676852   .4094939          0          1    1334863 
+mpce_bottom2 |      2057    6420119   .2525291     .18885   .4345687          0          1    1621267 
+
+. eststo d_social: estpost summarize `rows' if social_pen == 1 [aw = indiaindividualweight]
+
+             |  e(count)   e(sum_w)    e(mean)     e(Var)      e(sd)     e(min)     e(max)     e(sum) 
+-------------+----------------------------------------------------------------------------------------
+   depressed |      9539   3.29e+07   .1049955   .0939813   .3065637          0          1    3452452 
+     any_pen |      9539   3.29e+07          1          0          0          1          1   3.29e+07 
+    work_pen |      9539   3.29e+07     .00792   .0078581   .0886457          0          1   260423.5 
+  social_pen |      9539   3.29e+07          1          0          0          1          1   3.29e+07 
+         age |      9539   3.29e+07   70.57238   55.75591   7.466988         60        111   2.32e+09 
+      female |      9539   3.29e+07   .5880724   .2422687   .4922079          0          1   1.93e+07 
+     widowed |      9539   3.29e+07    .498503    .250024    .500024          0          1   1.64e+07 
+living_alone |      9539   3.29e+07   .0915089   .0831437   .2883466          0          1    3008988 
+       urban |      9539   3.29e+07   .1884561   .1529565   .3910965          0          1    6196798 
+   schooling |      9539   3.29e+07   1.595374   9.129852   3.021564          0         19   5.25e+07 
+          sc |      9539   3.29e+07   .2478154   .1864225   .4317667          0          1    8148644 
+          st |      9539   3.29e+07   .1043112   .0934401   .3056798          0          1    3429951 
+    bpl_card |      9317   3.23e+07   .6666887   .2222387    .471422          0          1   2.15e+07 
+mpce_bottom2 |      9539   3.29e+07   .4874284   .2498682   .4998681          0          1   1.60e+07 
+
+. 
+. esttab d_all d_nopen d_work d_social using "$tables/table1_descriptives.tex", ///
+>     replace booktabs label nonumbers                                       ///
+>     cells("mean(fmt(3))") collabels(none)                                  ///
+>     mtitles("All" "No pension" "Work pension" "Social pension")           ///
+>     stats(N, fmt(%9.0fc) labels("Observations"))                          ///
+>     title("Characteristics of respondents aged 60+ by pension status\label{tab:desc}") ///
+>     addnotes("Means weighted by LASI national individual weights; observations unweighted." ///
+>              "Work- and social-pension columns overlap for respondents receiving both.")
+(output written to D:/Predoc_files/lasi-pensions-depression/output/tables/table1_descriptives.tex)
+
+. 
+. * Depression prevalence quoted in the text: unweighted, then weighted
+. summarize depressed
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+   depressed |     29,627     .075978    .2649674          0          1
+
+. summarize depressed [aw = indiaindividualweight]
+
+    Variable |     Obs      Weight        Mean   Std. dev.       Min        Max
+-------------+-----------------------------------------------------------------
+   depressed |  29,627   112638440    .0920731    .289134          0          1
+
+. 
+end of do-file
+
+. do "$code/04_regressions.do"    // Tables 2-5 and Figure 1
+
+. *==============================================================================
+. * 04_regressions.do
+. *
+. * Linear probability models of depression on pension receipt.
+. *   Table 2 : controls added step by step
+. *   Table 3 : work-related vs. social pensions, by scheme, and eligibility
+. *   Table 4 : robustness of the preferred specification (appendix)
+. *   Table 5 : heterogeneity by group (appendix)
+. *   Figure 1: pension coefficients from the preferred specification
+. *
+. * The outcome is scaled 0/100, so coefficients are in percentage points.
+. * Several respondents are interviewed per household, so standard errors are
+. * clustered by household; Table 4 also clusters by village/urban ward.
+. *
+. * Input : $work/02_analysis.dta
+. * Output: $tables/table2_main.tex ... table5_heterogeneity.tex,
+. *         $figs/figure1_coefplot.pdf
+. *==============================================================================
+. 
+. use "$work/02_analysis.dta", clear
+
+. 
+. *------------------------------------------------------------------------------
+. * Control sets (reference groups in comments)
+. *------------------------------------------------------------------------------
+. local c_demo  "c.age##c.age i.female ib2.hhstruct"   // married, spouse + children
+
+. local c_ses   "i.urban c.schooling ib3.caste i.religion" // rural, OBC, Hindu
+
+. local c_mpce  "i.mpce_quintile"                      // poorest quintile
+
+. local c_state "i.stateid"
+
+. local full    "`c_demo' `c_ses' `c_mpce' `c_state'"
+
+. 
+. *------------------------------------------------------------------------------
+. * Table 2: pension receipt and depression, adding controls step by step
+. *------------------------------------------------------------------------------
+. local spec1 ""
+
+. local spec2 "`c_demo'"
+
+. local spec3 "`c_demo' `c_ses'"
+
+. local spec4 "`c_demo' `c_ses' `c_mpce'"
+
+. local spec5 "`full'"
+
+. 
+. eststo clear
+
+. forvalues j = 1/5 {
+  2.     eststo m`j': regress dep_pp any_pen `spec`j'', vce(cluster hh_id)
+  3. }
+
+Linear regression                               Number of obs     =     29,627
+                                                F(1, 22699)       =       3.47
+                                                Prob > F          =     0.0624
+                                                R-squared         =     0.0001
+                                                Root MSE          =     26.496
+
+                             (Std. err. adjusted for 22,700 clusters in hh_id)
+------------------------------------------------------------------------------
+             |               Robust
+      dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     any_pen |   .6048339   .3245034     1.86   0.062     -.031215    1.240883
+       _cons |   7.362844   .2043159    36.04   0.000      6.96237    7.763317
+------------------------------------------------------------------------------
+
+Linear regression                               Number of obs     =     29,627
+                                                F(10, 22699)      =       7.95
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0037
+                                                Root MSE          =     26.452
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                         any_pen |   .1816404   .3330656     0.55   0.586    -.4711911    .8344719
+                             age |  -.0875703   .3033398    -0.29   0.773    -.6821371    .5069966
+                                 |
+                     c.age#c.age |   .0006871   .0020825     0.33   0.741    -.0033947    .0047689
+                                 |
+                        1.female |   .3509628   .3210568     1.09   0.274    -.2783305    .9802561
+                                 |
+                        hhstruct |
+      Married, with spouse only  |    .509878   .4475735     1.14   0.255    -.3673967    1.387153
+Married, spouse not co-resident  |  -1.433045   1.548224    -0.93   0.355    -4.467671     1.60158
+                 Widowed, alone  |   5.098037    .939681     5.43   0.000     3.256198    6.939877
+         Widowed, with children  |   1.560414   .4484898     3.48   0.001     .6813436    2.439485
+           Widowed, with others  |   5.813588   1.051662     5.53   0.000     3.752259    7.874917
+                Other unmarried  |  -.0655585   .9221012    -0.07   0.943     -1.87294    1.741823
+                                 |
+                           _cons |   9.143385   10.94731     0.84   0.404    -12.31409    30.60086
+--------------------------------------------------------------------------------------------------
+
+Linear regression                               Number of obs     =     29,627
+                                                F(19, 22699)      =      22.30
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0117
+                                                Root MSE          =      26.35
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                         any_pen |   -.103777   .3350478    -0.31   0.757    -.7604937    .5529397
+                             age |  -.0363156   .3021539    -0.12   0.904    -.6285579    .5559267
+                                 |
+                     c.age#c.age |   .0003288   .0020741     0.16   0.874    -.0037366    .0043942
+                                 |
+                        1.female |   .0403834   .3402839     0.12   0.906    -.6265965    .7073632
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .3701693   .4480132     0.83   0.409    -.5079672    1.248306
+Married, spouse not co-resident  |  -1.563829   1.546105    -1.01   0.312      -4.5943    1.466643
+                 Widowed, alone  |   4.844524   .9403891     5.15   0.000     3.001297    6.687751
+         Widowed, with children  |   1.473152   .4498601     3.27   0.001     .5913955    2.354909
+           Widowed, with others  |   5.518833   1.046076     5.28   0.000     3.468453    7.569213
+                Other unmarried  |   .5729344   .9215198     0.62   0.534    -1.233308    2.379176
+                                 |
+                         1.urban |  -2.479248   .3614346    -6.86   0.000    -3.187685   -1.770812
+                       schooling |  -.1375478   .0378344    -3.64   0.000    -.2117059   -.0633897
+                                 |
+                           caste |
+                Scheduled Caste  |   .3740846     .52813     0.71   0.479    -.6610864    1.409256
+                Scheduled Tribe  |  -4.160852   .5013881    -8.30   0.000    -5.143607   -3.178097
+                  None of these  |  -.4578178   .4230001    -1.08   0.279    -1.286927    .3712915
+                                 |
+                        religion |
+                         Muslim  |    .962713   .5599548     1.72   0.086    -.1348367    2.060263
+                      Christian  |  -2.193945   .5277319    -4.16   0.000    -3.228335   -1.159554
+                           Sikh  |   .5502079   .9992917     0.55   0.582    -1.408472    2.508888
+                          Other  |  -.2063193   1.103705    -0.19   0.852    -2.369657    1.957018
+                                 |
+                           _cons |   9.833617   10.89985     0.90   0.367    -11.53083    31.19806
+--------------------------------------------------------------------------------------------------
+
+Linear regression                               Number of obs     =     29,627
+                                                F(23, 22699)      =      19.20
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0125
+                                                Root MSE          =      26.34
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                         any_pen |   -.082416   .3354017    -0.25   0.806    -.7398262    .5749943
+                             age |  -.0321261   .3018081    -0.11   0.915    -.6236906    .5594383
+                                 |
+                     c.age#c.age |   .0002982   .0020717     0.14   0.886    -.0037625     .004359
+                                 |
+                        1.female |   .0097605   .3417711     0.03   0.977    -.6601342    .6796552
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .2146938    .456552     0.47   0.638    -.6801795    1.109567
+Married, spouse not co-resident  |  -1.623958   1.548819    -1.05   0.294    -4.659749    1.411833
+                 Widowed, alone  |   4.611908   .9489816     4.86   0.000     2.751839    6.471977
+         Widowed, with children  |   1.451355   .4499523     3.23   0.001     .5694176    2.333292
+           Widowed, with others  |   5.463801   1.044544     5.23   0.000     3.416424    7.511179
+                Other unmarried  |   .4955489   .9252736     0.54   0.592    -1.318051    2.309149
+                                 |
+                         1.urban |  -2.431041   .3639577    -6.68   0.000    -3.144423   -1.717659
+                       schooling |  -.1549525   .0390844    -3.96   0.000    -.2315606   -.0783443
+                                 |
+                           caste |
+                Scheduled Caste  |   .3753556   .5281595     0.71   0.477    -.6598731    1.410584
+                Scheduled Tribe  |   -4.20213   .5043597    -8.33   0.000     -5.19071    -3.21355
+                  None of these  |  -.5375829   .4254515    -1.26   0.206    -1.371497    .2963312
+                                 |
+                        religion |
+                         Muslim  |   .9301059   .5599976     1.66   0.097    -.1675277     2.02774
+                      Christian  |  -2.204796   .5309754    -4.15   0.000    -3.245544   -1.164048
+                           Sikh  |   .3376721   1.003709     0.34   0.737    -1.629666     2.30501
+                          Other  |  -.2911704    1.10666    -0.26   0.792    -2.460301     1.87796
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.7240768   .5128152    -1.41   0.158     -1.72923    .2810762
+                       3 Middle  |  -1.671286   .4991791    -3.35   0.001    -2.649711   -.6928608
+                       4 Richer  |  -.1775685   .5371374    -0.33   0.741    -1.230395    .8752575
+                      5 Richest  |   .6646877   .5838421     1.14   0.255    -.4796827    1.809058
+                                 |
+                           _cons |   10.23832   10.88893     0.94   0.347    -11.10473    31.58138
+--------------------------------------------------------------------------------------------------
+
+Linear regression                               Number of obs     =     29,627
+                                                F(57, 22699)      =      15.84
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0320
+                                                Root MSE          =     26.094
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                         any_pen |   .5536631   .3488961     1.59   0.113    -.1301971    1.237523
+                             age |  -.0491829   .2991367    -0.16   0.869    -.6355112    .5371455
+                                 |
+                     c.age#c.age |   .0003361   .0020536     0.16   0.870    -.0036891    .0043613
+                                 |
+                        1.female |   .0494443   .3419046     0.14   0.885    -.6207121    .7196007
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .6508427   .4588249     1.42   0.156    -.2484855    1.550171
+Married, spouse not co-resident  |  -1.548556   1.532809    -1.01   0.312    -4.552966    1.455855
+                 Widowed, alone  |   5.244222   .9503958     5.52   0.000     3.381381    7.107063
+         Widowed, with children  |   1.579634   .4473603     3.53   0.000     .7027775    2.456491
+           Widowed, with others  |   5.591093    1.03457     5.40   0.000     3.563266    7.618921
+                Other unmarried  |   1.201838   .9319473     1.29   0.197    -.6248422    3.028519
+                                 |
+                         1.urban |  -1.933787   .3893334    -4.97   0.000    -2.696907   -1.170667
+                       schooling |  -.1702455   .0397852    -4.28   0.000    -.2482273   -.0922637
+                                 |
+                           caste |
+                Scheduled Caste  |  -.0206319   .5373133    -0.04   0.969    -1.073803    1.032539
+                Scheduled Tribe  |  -3.043134   .5963696    -5.10   0.000    -4.212059   -1.874209
+                  None of these  |  -1.378427   .4639358    -2.97   0.003    -2.287773   -.4690812
+                                 |
+                        religion |
+                         Muslim  |   .5323947   .6711785     0.79   0.428    -.7831612    1.847951
+                      Christian  |   1.235275   .7298331     1.69   0.091     -.195248    2.665798
+                           Sikh  |  -1.670285   1.379824    -1.21   0.226    -4.374835    1.034265
+                          Other  |    1.18974     1.1522     1.03   0.302    -1.068651    3.448131
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.5314808   .5093544    -1.04   0.297     -1.52985    .4668887
+                       3 Middle  |  -1.210436   .4998534    -2.42   0.015    -2.190183   -.2306889
+                       4 Richer  |   .5636098   .5409084     1.04   0.297    -.4966077    1.623827
+                      5 Richest  |    1.53277   .5929093     2.59   0.010     .3706269    2.694913
+                                 |
+                         stateid |
+               Himachal Pradesh  |  -1.144072    1.51131    -0.76   0.449    -4.106342    1.818199
+                         Punjab  |   4.210871   1.787937     2.36   0.019     .7063921    7.715351
+                     Chandigarh  |   4.114777    1.86146     2.21   0.027     .4661882    7.763366
+                    Uttarakhand  |   1.362283   1.574198     0.87   0.387    -1.723253    4.447819
+                        Haryana  |   .1289408   1.467691     0.09   0.930    -2.747834    3.005716
+                          Delhi  |   4.229638   1.725658     2.45   0.014     .8472308    7.612045
+                      Rajasthan  |  -.5782341    1.41422    -0.41   0.683    -3.350201    2.193733
+                  Uttar Pradesh  |    8.43849   1.432035     5.89   0.000     5.631605    11.24538
+                          Bihar  |   5.089616   1.422866     3.58   0.000     2.300702    7.878531
+              Arunachal Pradesh  |  -4.569047   1.467853    -3.11   0.002     -7.44614   -1.691955
+                       Nagaland  |  -3.300717   1.466277    -2.25   0.024     -6.17472   -.4267131
+                        Manipur  |  -5.068289   1.271902    -3.98   0.000    -7.561305   -2.575274
+                        Mizoram  |  -3.315733   1.428154    -2.32   0.020    -6.115013   -.5164523
+                        Tripura  |  -1.393417   1.547356    -0.90   0.368     -4.42634    1.639506
+                      Meghalaya  |  -3.881251   1.457388    -2.66   0.008    -6.737831   -1.024671
+                          Assam  |   2.490315   1.599784     1.56   0.120    -.6453717    5.626003
+                    West Bengal  |    3.12196   1.397618     2.23   0.026     .3825325    5.861387
+                      Jharkhand  |    .377892   1.392324     0.27   0.786    -2.351158    3.106942
+                         Odisha  |   -1.55314   1.353609    -1.15   0.251    -4.206306    1.100026
+                   Chhattisgarh  |  -.0066179   1.490286    -0.00   0.996    -2.927681    2.914445
+                 Madhya Pradesh  |   10.34222   1.625403     6.36   0.000     7.156316    13.52812
+                        Gujarat  |  -1.304469   1.360754    -0.96   0.338     -3.97164    1.362703
+                    Daman & Diu  |  -2.002742   1.529178    -1.31   0.190    -5.000035    .9945514
+           Dadra & Nagar Haveli  |   .0610968   1.596111     0.04   0.969     -3.06739    3.189583
+                    Maharashtra  |   3.590238   1.363387     2.63   0.008     .9179059     6.26257
+                 Andhra Pradesh  |  -3.938057   1.313272    -3.00   0.003    -6.512161   -1.363954
+                      Karnataka  |   1.315132     1.4779     0.89   0.374    -1.581654    4.211917
+                            Goa  |   9.185408   1.984559     4.63   0.000     5.295537    13.07528
+                    Lakshadweep  |   .8554945   1.498016     0.57   0.568    -2.080719    3.791708
+                         Kerala  |   .3249077   1.379416     0.24   0.814    -2.378842    3.028658
+                     Tamil Nadu  |  -2.574919   1.342088    -1.92   0.055    -5.205502    .0556649
+                     Puducherry  |   1.340314   1.686435     0.79   0.427    -1.965214    4.645842
+      Andaman & Nicobar Islands  |  -4.674012   1.352628    -3.46   0.001    -7.325255   -2.022769
+                      Telangana  |  -2.389073   1.353747    -1.76   0.078    -5.042511    .2643638
+                                 |
+                           _cons |   8.710797   10.82597     0.80   0.421    -12.50884    29.93043
+--------------------------------------------------------------------------------------------------
+
+. assert e(N) == 29627                     // every column uses the same sample
+
+. 
+. estadd ysumm : m1 m2 m3 m4 m5            // adds the mean of the outcome
+
+. estadd local demo  "No"  : m1
+
+. estadd local demo  "Yes" : m2 m3 m4 m5
+
+. estadd local ses   "No"  : m1 m2
+
+. estadd local ses   "Yes" : m3 m4 m5
+
+. estadd local mpce  "No"  : m1 m2 m3
+
+. estadd local mpce  "Yes" : m4 m5
+
+. estadd local state "No"  : m1 m2 m3 m4
+
+. estadd local state "Yes" : m5
+
+. 
+. esttab m1 m2 m3 m4 m5 using "$tables/table2_main.tex",                     ///
+>     replace booktabs label nomtitles keep(any_pen) b(2) se(2)              ///
+>     star(* 0.10 ** 0.05 *** 0.01)                                          ///
+>     stats(demo ses mpce state ymean N r2,                                  ///
+>           fmt(0 0 0 0 2 %9.0fc 3)                                          ///
+>           labels("Age, sex, household structure"                           ///
+>                  "Urban, schooling, caste, religion"                       ///
+>                  "MPCE quintiles" "State fixed effects"                     ///
+>                  "Mean of outcome" "Observations" "R-squared"))            ///
+>     title("Pension receipt and depression\label{tab:main}")               ///
+>     addnotes("Linear probability models. The outcome is depressed (CIDI-SF) x 100,"   ///
+>              "so coefficients are in percentage points. Standard errors clustered by household.")
+(output written to D:/Predoc_files/lasi-pensions-depression/output/tables/table2_main.tex)
+
+. 
+. *------------------------------------------------------------------------------
+. * Table 3: work-related vs. social pensions, by scheme, and eligibility
+. *   (1) the two pension types as separate regressors
+. *   (2) social pensions split by scheme
+. *   (3) adds the BPL/Antyodaya card, the old-age pension's eligibility rule
+. *   (4) restricted to households holding a BPL/Antyodaya card
+. *------------------------------------------------------------------------------
+. eststo t1: regress dep_pp work_pen social_pen `full', vce(cluster hh_id)
+
+Linear regression                               Number of obs     =     29,627
+                                                F(58, 22699)      =      15.57
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0321
+                                                Root MSE          =     26.094
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                        work_pen |  -.2704235   .5790552    -0.47   0.640    -1.405411    .8645643
+                      social_pen |   .7009531   .3922615     1.79   0.074    -.0679063    1.469812
+                             age |  -.0454129   .2991155    -0.15   0.879    -.6316997    .5408739
+                                 |
+                     c.age#c.age |   .0003142   .0020535     0.15   0.878    -.0037108    .0043393
+                                 |
+                        1.female |   .0109251   .3426596     0.03   0.975    -.6607112    .6825615
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .6470408   .4587682     1.41   0.158    -.2521763    1.546258
+Married, spouse not co-resident  |  -1.552544   1.533269    -1.01   0.311    -4.557857    1.452768
+                 Widowed, alone  |   5.217935   .9519594     5.48   0.000     3.352029    7.083841
+         Widowed, with children  |   1.556508   .4482751     3.47   0.001     .6778582    2.435158
+           Widowed, with others  |   5.566915   1.034426     5.38   0.000     3.539368    7.594461
+                Other unmarried  |    1.18688    .932303     1.27   0.203    -.6404977    3.014258
+                                 |
+                         1.urban |  -1.906206   .3899226    -4.89   0.000    -2.670481   -1.141931
+                       schooling |   -.153054    .041832    -3.66   0.000    -.2350475   -.0710604
+                                 |
+                           caste |
+                Scheduled Caste  |  -.0113025   .5374107    -0.02   0.983    -1.064664    1.042059
+                Scheduled Tribe  |  -3.031125   .5964998    -5.08   0.000    -4.200305   -1.861944
+                  None of these  |  -1.378688   .4638968    -2.97   0.003    -2.287957   -.4694183
+                                 |
+                        religion |
+                         Muslim  |     .52675   .6710454     0.78   0.432    -.7885449    1.842045
+                      Christian  |   1.247257   .7299955     1.71   0.088    -.1835844    2.678098
+                           Sikh  |  -1.683668   1.380133    -1.22   0.223    -4.388823    1.021486
+                          Other  |   1.188828   1.151721     1.03   0.302    -1.068624    3.446281
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.5240826   .5094922    -1.03   0.304    -1.522722    .4745571
+                       3 Middle  |   -1.19254   .5003113    -2.38   0.017    -2.173184   -.2118955
+                       4 Richer  |   .5881864   .5415822     1.09   0.277    -.4733518    1.649725
+                      5 Richest  |   1.581464   .5940616     2.66   0.008     .4170631    2.745866
+                                 |
+                         stateid |
+               Himachal Pradesh  |  -1.065629   1.513224    -0.70   0.481    -4.031651    1.900393
+                         Punjab  |   4.147307   1.788299     2.32   0.020      .642118    7.652497
+                     Chandigarh  |   4.131704   1.862392     2.22   0.027      .481288     7.78212
+                    Uttarakhand  |   1.384123   1.574147     0.88   0.379    -1.701313    4.469558
+                        Haryana  |   .0547268   1.470571     0.04   0.970    -2.827692    2.937146
+                          Delhi  |   4.181117   1.724282     2.42   0.015     .8014059    7.560827
+                      Rajasthan  |  -.6305376   1.415374    -0.45   0.656    -3.404767    2.143692
+                  Uttar Pradesh  |   8.440129   1.431629     5.90   0.000     5.634038    11.24622
+                          Bihar  |   5.059946   1.422467     3.56   0.000     2.271813     7.84808
+              Arunachal Pradesh  |  -4.568289   1.467448    -3.11   0.002    -7.444587   -1.691991
+                       Nagaland  |  -3.286144   1.466203    -2.24   0.025    -6.160001   -.4122861
+                        Manipur  |  -5.090339   1.271968    -4.00   0.000    -7.583484   -2.597194
+                        Mizoram  |  -3.358716    1.42858    -2.35   0.019    -6.158831   -.5586014
+                        Tripura  |   -1.46598    1.54944    -0.95   0.344    -4.502988    1.571029
+                      Meghalaya  |  -3.933588   1.458107    -2.70   0.007    -6.791577   -1.075599
+                          Assam  |   2.478074   1.599948     1.55   0.121     -.657933    5.614081
+                    West Bengal  |   3.094974   1.397312     2.21   0.027     .3561474    5.833801
+                      Jharkhand  |   .3671384   1.391872     0.26   0.792    -2.361026    3.095303
+                         Odisha  |  -1.600572   1.354042    -1.18   0.237    -4.254587    1.053443
+                   Chhattisgarh  |  -.0210076   1.489621    -0.01   0.989    -2.940766    2.898751
+                 Madhya Pradesh  |     10.303   1.625035     6.34   0.000     7.117818    13.48818
+                        Gujarat  |  -1.312186   1.360304    -0.96   0.335    -3.978474    1.354103
+                    Daman & Diu  |     -2.082   1.530368    -1.36   0.174    -5.081626    .9176267
+           Dadra & Nagar Haveli  |   .0178447   1.595632     0.01   0.991    -3.109704    3.145394
+                    Maharashtra  |   3.600375   1.362761     2.64   0.008     .9292693    6.271481
+                 Andhra Pradesh  |  -3.999161   1.315017    -3.04   0.002    -6.576683   -1.421638
+                      Karnataka  |   1.237905   1.478145     0.84   0.402    -1.659361    4.135171
+                            Goa  |   9.123822   1.984326     4.60   0.000     5.234407    13.01324
+                    Lakshadweep  |   .8871092   1.498069     0.59   0.554    -2.049208    3.823427
+                         Kerala  |   .2376509    1.38113     0.17   0.863    -2.469459    2.944761
+                     Tamil Nadu  |  -2.570378   1.341773    -1.92   0.055    -5.200345    .0595899
+                     Puducherry  |   1.260398   1.689151     0.75   0.456    -2.050454     4.57125
+      Andaman & Nicobar Islands  |  -4.721928   1.353844    -3.49   0.000    -7.375556     -2.0683
+                      Telangana  |  -2.434535   1.354531    -1.80   0.072     -5.08951     .220439
+                                 |
+                           _cons |    8.53018   10.82614     0.79   0.431    -12.68979    29.75016
+--------------------------------------------------------------------------------------------------
+
+. eststo t2: regress dep_pp work_pen oldage_pen widow_pen other_social `full', ///
+>            vce(cluster hh_id)
+
+Linear regression                               Number of obs     =     29,627
+                                                F(60, 22699)      =      15.07
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0321
+                                                Root MSE          =     26.094
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                        work_pen |   -.246589    .579346    -0.43   0.670    -1.382147    .8889689
+                      oldage_pen |   .8171127   .4157403     1.97   0.049     .0022333    1.631992
+                       widow_pen |  -.1624387   .7777887    -0.21   0.835    -1.686958     1.36208
+                    other_social |    .603704   1.514641     0.40   0.690    -2.365096    3.572504
+                             age |  -.0535991   .2990739    -0.18   0.858    -.6398045    .5326063
+                                 |
+                     c.age#c.age |   .0003519   .0020529     0.17   0.864    -.0036719    .0043757
+                                 |
+                        1.female |   .0653018    .343753     0.19   0.849    -.6084776    .7390812
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .6418632   .4587981     1.40   0.162    -.2574125    1.541139
+Married, spouse not co-resident  |  -1.535152   1.533258    -1.00   0.317    -4.540442    1.470138
+                 Widowed, alone  |   5.366647   .9612496     5.58   0.000     3.482532    7.250762
+         Widowed, with children  |   1.691269   .4646379     3.64   0.000     .7805471    2.601991
+           Widowed, with others  |   5.692744   1.036358     5.49   0.000     3.661411    7.724078
+                Other unmarried  |   1.198062   .9323122     1.29   0.199     -.629334    3.025457
+                                 |
+                         1.urban |  -1.912179   .3899161    -4.90   0.000    -2.676441   -1.147916
+                       schooling |  -.1522766   .0418592    -3.64   0.000    -.2343235   -.0702297
+                                 |
+                           caste |
+                Scheduled Caste  |  -.0144398   .5375146    -0.03   0.979    -1.068005    1.039126
+                Scheduled Tribe  |  -3.036456   .5965201    -5.09   0.000    -4.205676   -1.867236
+                  None of these  |  -1.381693   .4640415    -2.98   0.003    -2.291246   -.4721398
+                                 |
+                        religion |
+                         Muslim  |   .5251362   .6710055     0.78   0.434    -.7900806    1.840353
+                      Christian  |   1.249249    .730065     1.71   0.087    -.1817282    2.680226
+                           Sikh  |  -1.703501   1.380034    -1.23   0.217    -4.408462     1.00146
+                          Other  |   1.177079    1.15172     1.02   0.307    -1.080371    3.434529
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.5228821   .5094227    -1.03   0.305    -1.521386    .4756214
+                       3 Middle  |  -1.193699   .5002771    -2.39   0.017    -2.174276   -.2131215
+                       4 Richer  |   .5881652   .5415447     1.09   0.277    -.4732996     1.64963
+                      5 Richest  |   1.575764   .5941143     2.65   0.008     .4112589    2.740268
+                                 |
+                         stateid |
+               Himachal Pradesh  |   -1.06233   1.513258    -0.70   0.483     -4.02842    1.903759
+                         Punjab  |    4.12912   1.787662     2.31   0.021     .6251807    7.633059
+                     Chandigarh  |   4.149767    1.86237     2.23   0.026      .499394    7.800139
+                    Uttarakhand  |    1.38347   1.574393     0.88   0.380    -1.702449    4.469389
+                        Haryana  |   .0777851   1.469666     0.05   0.958     -2.80286     2.95843
+                          Delhi  |   4.180251   1.724639     2.42   0.015     .7998395    7.560662
+                      Rajasthan  |  -.6619841   1.416198    -0.47   0.640    -3.437829    2.113861
+                  Uttar Pradesh  |   8.435283   1.431703     5.89   0.000     5.629048    11.24152
+                          Bihar  |   5.023507   1.422589     3.53   0.000     2.235136    7.811879
+              Arunachal Pradesh  |   -4.59385   1.467665    -3.13   0.002    -7.470574   -1.717127
+                       Nagaland  |  -3.311763   1.466281    -2.26   0.024    -6.185775   -.4377519
+                        Manipur  |  -5.126132   1.272721    -4.03   0.000    -7.620752   -2.631512
+                        Mizoram  |  -3.401051   1.429196    -2.38   0.017    -6.202373   -.5997285
+                        Tripura  |  -1.512381   1.550373    -0.98   0.329    -4.551219    1.526456
+                      Meghalaya  |  -3.987125   1.459395    -2.73   0.006    -6.847639   -1.126611
+                          Assam  |   2.423716   1.600341     1.51   0.130    -.7130605    5.560493
+                    West Bengal  |   3.094834    1.39715     2.22   0.027     .3563249    5.833343
+                      Jharkhand  |    .374639   1.391349     0.27   0.788    -2.352501    3.101779
+                         Odisha  |  -1.583111   1.353667    -1.17   0.242    -4.236392     1.07017
+                   Chhattisgarh  |  -.0246122   1.489378    -0.02   0.987    -2.943896    2.894672
+                 Madhya Pradesh  |   10.30381   1.624896     6.34   0.000     7.118898    13.48871
+                        Gujarat  |  -1.335087   1.360601    -0.98   0.326    -4.001957    1.331783
+                    Daman & Diu  |  -2.071845   1.528888    -1.36   0.175    -5.068571    .9248803
+           Dadra & Nagar Haveli  |   .0118007   1.595598     0.01   0.994    -3.115681    3.139282
+                    Maharashtra  |   3.585819   1.362809     2.63   0.009     .9146204    6.257017
+                 Andhra Pradesh  |   -3.94344   1.313872    -3.00   0.003     -6.51872    -1.36816
+                      Karnataka  |   1.232658   1.477444     0.83   0.404    -1.663233     4.12855
+                            Goa  |   9.108903   1.986118     4.59   0.000     5.215976    13.00183
+                    Lakshadweep  |   .8956592   1.498405     0.60   0.550    -2.041317    3.832636
+                         Kerala  |   .2480051   1.381041     0.18   0.857     -2.45893     2.95494
+                     Tamil Nadu  |  -2.612456   1.342698    -1.95   0.052    -5.244235    .0193238
+                     Puducherry  |   1.239935   1.694749     0.73   0.464     -2.08189    4.561759
+      Andaman & Nicobar Islands  |  -4.721882   1.356333    -3.48   0.000    -7.380387   -2.063377
+                      Telangana  |  -2.379867   1.359868    -1.75   0.080    -5.045302    .2855683
+                                 |
+                           _cons |   8.870538   10.82655     0.82   0.413    -12.35024    30.09132
+--------------------------------------------------------------------------------------------------
+
+. eststo t3: regress dep_pp work_pen social_pen bpl_card `full', vce(cluster hh_id)
+
+Linear regression                               Number of obs     =     28,948
+                                                F(59, 22130)      =      15.18
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0324
+                                                Root MSE          =     26.246
+
+                                                 (Std. err. adjusted for 22,131 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                        work_pen |  -.0198731    .592773    -0.03   0.973     -1.18175    1.142004
+                      social_pen |   .5712296   .4021421     1.42   0.155    -.2169976    1.359457
+                        bpl_card |   1.565393   .3953756     3.96   0.000     .7904288    2.340358
+                             age |   .0201117   .3014674     0.07   0.947    -.5707859    .6110093
+                                 |
+                     c.age#c.age |   -.000093    .002068    -0.04   0.964    -.0041464    .0039604
+                                 |
+                        1.female |   .0508508   .3479981     0.15   0.884    -.6312503    .7329519
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .5743304   .4662342     1.23   0.218    -.3395218    1.488183
+Married, spouse not co-resident  |  -1.534893   1.551233    -0.99   0.322     -4.57542    1.505635
+                 Widowed, alone  |   5.116335   .9558086     5.35   0.000     3.242882    6.989788
+         Widowed, with children  |   1.543784   .4558787     3.39   0.001     .6502292    2.437338
+           Widowed, with others  |   5.421195   1.051379     5.16   0.000     3.360419    7.481972
+                Other unmarried  |   1.183829   .9494412     1.25   0.212     -.677143    3.044802
+                                 |
+                         1.urban |  -1.640035   .4005726    -4.09   0.000    -2.425186   -.8548846
+                       schooling |  -.1299554     .04299    -3.02   0.003    -.2142189   -.0456919
+                                 |
+                           caste |
+                Scheduled Caste  |  -.2242506   .5485213    -0.41   0.683    -1.299391    .8508903
+                Scheduled Tribe  |  -3.193001    .612019    -5.22   0.000    -4.392601     -1.9934
+                  None of these  |  -1.288881   .4733122    -2.72   0.006    -2.216606    -.361155
+                                 |
+                        religion |
+                         Muslim  |   .5840139   .6867919     0.85   0.395    -.7621471    1.930175
+                      Christian  |   1.318814   .7467495     1.77   0.077    -.1448683    2.782496
+                           Sikh  |  -1.480195    1.40932    -1.05   0.294    -4.242562    1.282172
+                          Other  |   1.358691   1.178564     1.15   0.249    -.9513775     3.66876
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.4670066   .5218531    -0.89   0.371    -1.489876    .5558626
+                       3 Middle  |  -1.029577   .5145418    -2.00   0.045    -2.038116   -.0210388
+                       4 Richer  |   .7689774    .556492     1.38   0.167    -.3217865    1.859741
+                      5 Richest  |   1.784973   .6104964     2.92   0.003     .5883568     2.98159
+                                 |
+                         stateid |
+               Himachal Pradesh  |  -.9502212   1.521084    -0.62   0.532    -3.931655    2.031212
+                         Punjab  |   4.960156   1.826355     2.72   0.007     1.380371    8.539941
+                     Chandigarh  |   4.670065   1.894822     2.46   0.014     .9560788    8.384051
+                    Uttarakhand  |   1.645846   1.586647     1.04   0.300    -1.464096    4.755788
+                        Haryana  |   .5648755   1.488536     0.38   0.704    -2.352762    3.482513
+                          Delhi  |   4.285929   1.733173     2.47   0.013      .888786    7.683072
+                      Rajasthan  |   .0239413   1.429205     0.02   0.987    -2.777402    2.825285
+                  Uttar Pradesh  |    8.80917   1.444931     6.10   0.000     5.977002    11.64134
+                          Bihar  |   5.130413   1.427309     3.59   0.000     2.332786    7.928041
+              Arunachal Pradesh  |  -4.582416   1.479373    -3.10   0.002    -7.482092   -1.682741
+                       Nagaland  |  -3.557278   1.474047    -2.41   0.016    -6.446516   -.6680403
+                        Manipur  |  -5.385483   1.286637    -4.19   0.000    -7.907383   -2.863583
+                        Mizoram  |  -3.151589   1.446504    -2.18   0.029    -5.986839   -.3163394
+                        Tripura  |  -1.269572   1.565808    -0.81   0.417    -4.338668    1.799524
+                      Meghalaya  |  -3.947517   1.468806    -2.69   0.007    -6.826481   -1.068554
+                          Assam  |   2.519496   1.603633     1.57   0.116    -.6237401    5.662731
+                    West Bengal  |   3.160557   1.408179     2.24   0.025     .4004248    5.920689
+                      Jharkhand  |   .4175221   1.400804     0.30   0.766    -2.328154    3.163198
+                         Odisha  |  -1.446552   1.362667    -1.06   0.288    -4.117477    1.224372
+                   Chhattisgarh  |  -.0984324   1.509952    -0.07   0.948    -3.058047    2.861182
+                 Madhya Pradesh  |   10.53225   1.635335     6.44   0.000     7.326878    13.73762
+                        Gujarat  |  -.8942455   1.389628    -0.64   0.520    -3.618015    1.829524
+                    Daman & Diu  |  -1.154669   1.639038    -0.70   0.481    -4.367301    2.057962
+           Dadra & Nagar Haveli  |    1.23631   1.744723     0.71   0.479    -2.183471    4.656092
+                    Maharashtra  |    3.78297   1.371249     2.76   0.006     1.095225    6.470715
+                 Andhra Pradesh  |  -4.410486   1.332896    -3.31   0.001    -7.023058   -1.797915
+                      Karnataka  |   .9851328   1.495819     0.66   0.510    -1.946778    3.917044
+                            Goa  |   9.590856   2.015155     4.76   0.000     5.641008     13.5407
+                    Lakshadweep  |   1.309941   1.530978     0.86   0.392    -1.690886    4.310768
+                         Kerala  |   .5337908   1.406993     0.38   0.704    -2.224017    3.291598
+                     Tamil Nadu  |  -2.875366   1.356986    -2.12   0.034    -5.535155   -.2155765
+                     Puducherry  |    1.25107   1.699859     0.74   0.462    -2.080774    4.582914
+      Andaman & Nicobar Islands  |  -4.219029   1.369432    -3.08   0.002    -6.903213   -1.534846
+                      Telangana  |  -2.786065   1.374741    -2.03   0.043    -5.480654   -.0914754
+                                 |
+                           _cons |   4.809945   10.92927     0.44   0.660     -16.6122    26.23209
+--------------------------------------------------------------------------------------------------
+
+. eststo t4: regress dep_pp work_pen social_pen `full' if bpl_card == 1,      ///
+>            vce(cluster hh_id)
+
+Linear regression                               Number of obs     =     15,243
+                                                F(58, 11839)      =      11.25
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0420
+                                                Root MSE          =     26.867
+
+                                                 (Std. err. adjusted for 11,840 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                        work_pen |  -.1061513   1.237994    -0.09   0.932    -2.532824    2.320521
+                      social_pen |   .4003818   .5312757     0.75   0.451    -.6410059    1.441769
+                             age |   -.018696   .4211459    -0.04   0.965    -.8442112    .8068193
+                                 |
+                     c.age#c.age |   .0001596   .0028817     0.06   0.956    -.0054891    .0058083
+                                 |
+                        1.female |  -.2367678   .4927485    -0.48   0.631    -1.202636    .7291002
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   -.164151    .627505    -0.26   0.794    -1.394164    1.065862
+Married, spouse not co-resident  |   -2.93605   2.012693    -1.46   0.145    -6.881259    1.009159
+                 Widowed, alone  |   6.028945   1.262349     4.78   0.000     3.554533    8.503356
+         Widowed, with children  |   1.675467   .6443074     2.60   0.009     .4125185    2.938415
+           Widowed, with others  |   6.276555    1.44286     4.35   0.000     3.448313    9.104797
+                Other unmarried  |   2.911081   1.403439     2.07   0.038     .1601108    5.662052
+                                 |
+                         1.urban |  -1.368422   .6063186    -2.26   0.024    -2.556907   -.1799381
+                       schooling |  -.0544465   .0703083    -0.77   0.439    -.1922622    .0833693
+                                 |
+                           caste |
+                Scheduled Caste  |  -1.241708   .7153617    -1.74   0.083    -2.643935    .1605181
+                Scheduled Tribe  |  -4.088903   .7785655    -5.25   0.000    -5.615019   -2.562786
+                  None of these  |  -1.508195   .7557339    -2.00   0.046    -2.989558   -.0268323
+                                 |
+                        religion |
+                         Muslim  |   .8466849   .9715354     0.87   0.384    -1.057684    2.751054
+                      Christian  |   1.690427    .981719     1.72   0.085     -.233904    3.614757
+                           Sikh  |   -.214343   4.051978    -0.05   0.958    -8.156887      7.7282
+                          Other  |   2.048942   1.563474     1.31   0.190    -1.015724    5.113609
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.0524153   .6765061    -0.08   0.938    -1.378478    1.273648
+                       3 Middle  |  -.8348448   .6881873    -1.21   0.225    -2.183805    .5141154
+                       4 Richer  |   .7091007   .7630026     0.93   0.353    -.7865099    2.204711
+                      5 Richest  |   2.134415   .8680584     2.46   0.014     .4328783    3.835953
+                                 |
+                         stateid |
+               Himachal Pradesh  |  -.2134529    2.58535    -0.08   0.934    -5.281164    4.854258
+                         Punjab  |    10.7636   5.266506     2.04   0.041     .4403808    21.08682
+                     Chandigarh  |   2.975483   5.971793     0.50   0.618    -8.730212    14.68118
+                    Uttarakhand  |   1.635687   2.360972     0.69   0.488    -2.992206     6.26358
+                        Haryana  |   1.951508   2.553228     0.76   0.445     -3.05324    6.956255
+                          Delhi  |   6.194295   3.187683     1.94   0.052    -.0540883    12.44268
+                      Rajasthan  |  -.4548854   2.226343    -0.20   0.838    -4.818884    3.909113
+                  Uttar Pradesh  |   9.955329   2.221355     4.48   0.000     5.601108    14.30955
+                          Bihar  |   6.100976   2.002157     3.05   0.002      2.17642    10.02553
+              Arunachal Pradesh  |  -4.030101   2.055779    -1.96   0.050    -8.059767   -.0004358
+                       Nagaland  |  -3.294996    2.06459    -1.60   0.111    -7.341931    .7519395
+                        Manipur  |  -6.090499   1.802865    -3.38   0.001    -9.624411   -2.556587
+                        Mizoram  |   -3.46658   2.109027    -1.64   0.100     -7.60062    .6674596
+                        Tripura  |  -.7422857   2.206426    -0.34   0.737    -5.067244    3.582672
+                      Meghalaya  |  -3.584234    2.07729    -1.73   0.084    -7.656064    .4875956
+                          Assam  |   3.421163   2.295356     1.49   0.136    -1.078112    7.920437
+                    West Bengal  |    4.31033   2.067831     2.08   0.037     .2570414    8.363618
+                      Jharkhand  |   .5660094   2.009459     0.28   0.778     -3.37286    4.504879
+                         Odisha  |  -2.193314   1.929456    -1.14   0.256    -5.975365    1.588737
+                   Chhattisgarh  |   1.182657   2.063331     0.57   0.567    -2.861811    5.227125
+                 Madhya Pradesh  |   13.40866   2.447718     5.48   0.000      8.61073    18.20659
+                        Gujarat  |   .1893946   2.204114     0.09   0.932    -4.131031     4.50982
+                    Daman & Diu  |  -1.482153   2.573469    -0.58   0.565    -6.526575    3.562268
+           Dadra & Nagar Haveli  |   1.231189   2.439447     0.50   0.614    -3.550527    6.012906
+                    Maharashtra  |   2.176338   2.011843     1.08   0.279    -1.767205    6.119882
+                 Andhra Pradesh  |  -3.697153   1.859682    -1.99   0.047    -7.342436     -.05187
+                      Karnataka  |   .9019498   2.006589     0.45   0.653    -3.031294    4.835193
+                            Goa  |   17.73696   3.572236     4.97   0.000      10.7348    24.73913
+                    Lakshadweep  |    .886023    2.41345     0.37   0.714    -3.844737    5.616783
+                         Kerala  |   2.773098   2.230938     1.24   0.214    -1.599907    7.146102
+                     Tamil Nadu  |   -3.04227   1.945104    -1.56   0.118    -6.854994    .7704538
+                     Puducherry  |   2.300595   2.423622     0.95   0.343    -2.450102    7.051293
+      Andaman & Nicobar Islands  |  -4.384741   2.214913    -1.98   0.048    -8.726335   -.0431468
+                      Telangana  |  -2.453393     1.8879    -1.30   0.194    -6.153987      1.2472
+                                 |
+                           _cons |   7.364515   15.27195     0.48   0.630    -22.57102    37.30005
+--------------------------------------------------------------------------------------------------
+
+. estadd ysumm : t1 t2 t3 t4
+
+. 
+. esttab t1 t2 t3 t4 using "$tables/table3_pension_type.tex",                 ///
+>     replace booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)        ///
+>     keep(work_pen social_pen oldage_pen widow_pen other_social bpl_card)   ///
+>     order(work_pen social_pen oldage_pen widow_pen other_social bpl_card)  ///
+>     mtitles("By type" "By scheme" "BPL control" "BPL households")          ///
+>     stats(ymean N r2, fmt(2 %9.0fc 3)                                      ///
+>           labels("Mean of outcome" "Observations" "R-squared"))            ///
+>     title("Work-related and social pensions\label{tab:type}")             ///
+>     addnotes("All columns include the controls and state fixed effects of Table 2, column 5."  ///
+>              "Outcome x 100. Standard errors clustered by household.")
+(output written to D:/Predoc_files/lasi-pensions-depression/output/tables/table3_pension_type.tex)
+
+. 
+. *------------------------------------------------------------------------------
+. * Table 4 (appendix): robustness of the preferred specification
+. *   (1) preferred specification (Table 2, column 5)
+. *   (2) LASI national survey weights
+. *   (3) standard errors clustered by village/urban ward
+. *   (4) broader treatment that adds expected work-related pensions
+. *   (5) drops MPCE and household structure, which pensions may affect
+. *   (6) probit; average marginal effect of pension receipt, x 100
+. *------------------------------------------------------------------------------
+. eststo r2: regress dep_pp any_pen `full' [pw = indiaindividualweight],      ///
+>            vce(cluster hh_id)
+(sum of wgt is 112,638,439.72628)
+
+Linear regression                               Number of obs     =     29,627
+                                                F(57, 22699)      =      10.69
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0350
+                                                Root MSE          =      28.43
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                         any_pen |   1.676856   .6189106     2.71   0.007     .4637488    2.889963
+                             age |  -.6755313   .5566259    -1.21   0.225    -1.766556    .4154935
+                                 |
+                     c.age#c.age |   .0047712   .0037553     1.27   0.204    -.0025894    .0121318
+                                 |
+                        1.female |   1.307277   .5944924     2.20   0.028     .1420314    2.472523
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   1.105648   .8618977     1.28   0.200    -.5837301    2.795027
+Married, spouse not co-resident  |  -.8157529   2.708361    -0.30   0.763    -6.124325     4.49282
+                 Widowed, alone  |   5.424132   1.717883     3.16   0.002     2.056963    8.791301
+         Widowed, with children  |   .8669289   .8208334     1.06   0.291    -.7419607    2.475819
+           Widowed, with others  |   6.213904   1.908806     3.26   0.001     2.472514    9.955294
+                Other unmarried  |   .2496499   1.593656     0.16   0.876    -2.874025    3.373325
+                                 |
+                         1.urban |  -2.312991   .6489152    -3.56   0.000    -3.584909   -1.041073
+                       schooling |  -.1913864   .0626699    -3.05   0.002    -.3142236   -.0685492
+                                 |
+                           caste |
+                Scheduled Caste  |   .1410395   .9007873     0.16   0.876    -1.624565    1.906644
+                Scheduled Tribe  |  -4.897582   .9844766    -4.97   0.000    -6.827224   -2.967941
+                  None of these  |  -1.690029   .7343716    -2.30   0.021    -3.129448   -.2506106
+                                 |
+                        religion |
+                         Muslim  |   .4399567   1.102132     0.40   0.690    -1.720298    2.600212
+                      Christian  |   2.925594   1.926222     1.52   0.129    -.8499327    6.701121
+                           Sikh  |  -3.981076   1.685545    -2.36   0.018    -7.284859   -.6772921
+                          Other  |   1.440331   2.407778     0.60   0.550    -3.279079    6.159742
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -1.510858   .8169061    -1.85   0.064     -3.11205    .0903337
+                       3 Middle  |  -.8512899   1.049979    -0.81   0.418    -2.909321    1.206741
+                       4 Richer  |   .2573211   .9273407     0.28   0.781     -1.56033    2.074973
+                      5 Richest  |   1.490346   .9849239     1.51   0.130    -.4401724    3.420864
+                                 |
+                         stateid |
+               Himachal Pradesh  |   .4795916   2.012895     0.24   0.812     -3.46582    4.425003
+                         Punjab  |   6.832102    2.12262     3.22   0.001     2.671621    10.99258
+                     Chandigarh  |   5.471256   2.374668     2.30   0.021      .816744    10.12577
+                    Uttarakhand  |   2.297751   1.863647     1.23   0.218    -1.355124    5.950627
+                        Haryana  |  -.5715661   1.632895    -0.35   0.726    -3.772152    2.629019
+                          Delhi  |   7.808361   3.196353     2.44   0.015      1.54329    14.07343
+                      Rajasthan  |  -.0114771   1.660373    -0.01   0.994    -3.265923    3.242968
+                  Uttar Pradesh  |   9.287522   1.637054     5.67   0.000     6.078784    12.49626
+                          Bihar  |   4.670467   1.621555     2.88   0.004     1.492108    7.848826
+              Arunachal Pradesh  |  -2.775283   2.310163    -1.20   0.230     -7.30336    1.752795
+                       Nagaland  |  -1.933206   2.601201    -0.74   0.457    -7.031738    3.165325
+                        Manipur  |  -3.892049   1.536837    -2.53   0.011    -6.904355    -.879744
+                        Mizoram  |  -3.042093   2.334152    -1.30   0.192     -7.61719    1.533005
+                        Tripura  |  -.5363904   1.760136    -0.30   0.761    -3.986378    2.913597
+                      Meghalaya  |  -2.833669   2.262558    -1.25   0.210    -7.268439      1.6011
+                          Assam  |   4.576565   1.891879     2.42   0.016     .8683531    8.284776
+                    West Bengal  |   3.154221   1.592092     1.98   0.048     .0336116    6.274831
+                      Jharkhand  |   1.568656   1.608453     0.98   0.329    -1.584022    4.721335
+                         Odisha  |  -1.108334   1.582046    -0.70   0.484    -4.209253    1.992585
+                   Chhattisgarh  |   .3894575   1.692177     0.23   0.818    -2.927324    3.706239
+                 Madhya Pradesh  |    12.9129   2.736857     4.72   0.000     7.548477    18.27733
+                        Gujarat  |  -.3314585   1.488958    -0.22   0.824    -3.249919    2.587002
+                    Daman & Diu  |  -2.215804   1.707703    -1.30   0.194    -5.563019    1.131412
+           Dadra & Nagar Haveli  |   1.670443   1.827315     0.91   0.361    -1.911219    5.252105
+                    Maharashtra  |   4.490276   1.571373     2.86   0.004     1.410277    7.570276
+                 Andhra Pradesh  |  -2.980005    1.59596    -1.87   0.062    -6.108196    .1481867
+                      Karnataka  |  -.8369262   1.627092    -0.51   0.607    -4.026138    2.352285
+                            Goa  |   10.13437    2.29059     4.42   0.000     5.644657    14.62409
+                    Lakshadweep  |   3.693356   1.922781     1.92   0.055    -.0754262    7.462138
+                         Kerala  |   1.176864   1.761382     0.67   0.504    -2.275565    4.629294
+                     Tamil Nadu  |  -.7698388   1.783013    -0.43   0.666    -4.264667     2.72499
+                     Puducherry  |  -1.591246   1.756605    -0.91   0.365    -5.034311     1.85182
+      Andaman & Nicobar Islands  |  -5.202194   1.660276    -3.13   0.002     -8.45645   -1.947939
+                      Telangana  |  -2.129682   1.575563    -1.35   0.176    -5.217894    .9585298
+                                 |
+                           _cons |   29.52282   20.24023     1.46   0.145    -10.14942    69.19506
+--------------------------------------------------------------------------------------------------
+
+. eststo r3: regress dep_pp any_pen `full', vce(cluster ssu_id)
+
+Linear regression                               Number of obs     =     29,627
+                                                F(57, 2375)       =      11.96
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0320
+                                                Root MSE          =     26.094
+
+                                                 (Std. err. adjusted for 2,376 clusters in ssu_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                         any_pen |   .5536631   .3595596     1.54   0.124      -.15142    1.258746
+                             age |  -.0491829   .3068455    -0.16   0.873    -.6508957    .5525299
+                                 |
+                     c.age#c.age |   .0003361   .0021032     0.16   0.873    -.0037882    .0044604
+                                 |
+                        1.female |   .0494443   .3493266     0.14   0.887    -.6355723    .7344608
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .6508427   .4767224     1.37   0.172    -.2839924    1.585678
+Married, spouse not co-resident  |  -1.548556   1.519623    -1.02   0.308    -4.528481     1.43137
+                 Widowed, alone  |   5.244222   .9504895     5.52   0.000     3.380347    7.108097
+         Widowed, with children  |   1.579634   .4552236     3.47   0.001     .6869575    2.472311
+           Widowed, with others  |   5.591093   1.049039     5.33   0.000     3.533966    7.648221
+                Other unmarried  |   1.201838   .9694193     1.24   0.215    -.6991574    3.102834
+                                 |
+                         1.urban |  -1.933787   .4609125    -4.20   0.000    -2.837619   -1.029954
+                       schooling |  -.1702455   .0411202    -4.14   0.000    -.2508807   -.0896104
+                                 |
+                           caste |
+                Scheduled Caste  |  -.0206319   .5771649    -0.04   0.971    -1.152431    1.111167
+                Scheduled Tribe  |  -3.043134   .6439048    -4.73   0.000    -4.305808    -1.78046
+                  None of these  |  -1.378427   .5146296    -2.68   0.007    -2.387597   -.3692572
+                                 |
+                        religion |
+                         Muslim  |   .5323947   .7767246     0.69   0.493    -.9907337    2.055523
+                      Christian  |   1.235275   .7662822     1.61   0.107    -.2673765    2.737926
+                           Sikh  |  -1.670285   1.511508    -1.11   0.269    -4.634296    1.293726
+                          Other  |    1.18974   1.228354     0.97   0.333    -1.219016    3.598497
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.5314808   .5104116    -1.04   0.298    -1.532379    .4694177
+                       3 Middle  |  -1.210436   .5238005    -2.31   0.021    -2.237589   -.1832821
+                       4 Richer  |   .5636098    .553763     1.02   0.309    -.5222992    1.649519
+                      5 Richest  |    1.53277   .6201869     2.47   0.014     .3166059    2.748934
+                                 |
+                         stateid |
+               Himachal Pradesh  |  -1.144072    2.11187    -0.54   0.588    -5.285371    2.997228
+                         Punjab  |   4.210871   2.346785     1.79   0.073    -.3910884    8.812831
+                     Chandigarh  |   4.114777    2.10549     1.95   0.051    -.0140123    8.243566
+                    Uttarakhand  |   1.362283   2.254711     0.60   0.546    -3.059123    5.783689
+                        Haryana  |   .1289408   2.018668     0.06   0.949    -3.829594    4.087476
+                          Delhi  |   4.229638   2.228861     1.90   0.058    -.1410763    8.600352
+                      Rajasthan  |  -.5782341   1.937505    -0.30   0.765     -4.37761    3.221142
+                  Uttar Pradesh  |    8.43849   2.026656     4.16   0.000     4.464292    12.41269
+                          Bihar  |   5.089616   2.112941     2.41   0.016     .9462165    9.233016
+              Arunachal Pradesh  |  -4.569047   1.884433    -2.42   0.015    -8.264352   -.8737425
+                       Nagaland  |  -3.300717   1.903773    -1.73   0.083    -7.033945    .4325122
+                        Manipur  |  -5.068289   1.765848    -2.87   0.004    -8.531052   -1.605527
+                        Mizoram  |  -3.315733   1.882379    -1.76   0.078     -7.00701    .3755441
+                        Tripura  |  -1.393417   2.083492    -0.67   0.504    -5.479068    2.692235
+                      Meghalaya  |  -3.881251   1.901357    -2.04   0.041    -7.609741   -.1527606
+                          Assam  |   2.490315   2.110367     1.18   0.238    -1.648037    6.628668
+                    West Bengal  |    3.12196   1.866211     1.67   0.094    -.5376112     6.78153
+                      Jharkhand  |    .377892   1.877602     0.20   0.841    -3.304016      4.0598
+                         Odisha  |   -1.55314   1.872832    -0.83   0.407    -5.225695    2.119416
+                   Chhattisgarh  |  -.0066179   1.974418    -0.00   0.997    -3.878378    3.865142
+                 Madhya Pradesh  |   10.34222   2.182026     4.74   0.000     6.063344    14.62109
+                        Gujarat  |  -1.304469   1.858659    -0.70   0.483    -4.949232    2.340294
+                    Daman & Diu  |  -2.002742   2.078087    -0.96   0.335    -6.077794    2.072311
+           Dadra & Nagar Haveli  |   .0610968   1.978016     0.03   0.975    -3.817719    3.939913
+                    Maharashtra  |   3.590238   1.955916     1.84   0.067    -.2452419    7.425718
+                 Andhra Pradesh  |  -3.938057   1.850185    -2.13   0.033    -7.566203   -.3099117
+                      Karnataka  |   1.315132   1.941217     0.68   0.498    -2.491524    5.121787
+                            Goa  |   9.185408   2.637293     3.48   0.001     4.013773    14.35704
+                    Lakshadweep  |   .8554945   1.842839     0.46   0.643    -2.758245    4.469234
+                         Kerala  |   .3249077   1.883008     0.17   0.863    -3.367602    4.017417
+                     Tamil Nadu  |  -2.574919   1.872606    -1.38   0.169    -6.247029    1.097192
+                     Puducherry  |   1.340314   2.312495     0.58   0.562    -3.194404    5.875032
+      Andaman & Nicobar Islands  |  -4.674012   1.796589    -2.60   0.009    -8.197057   -1.150967
+                      Telangana  |  -2.389073   1.844573    -1.30   0.195    -6.006213    1.228066
+                                 |
+                           _cons |   8.710797    11.0155     0.79   0.429     -12.8902     30.3118
+--------------------------------------------------------------------------------------------------
+
+. eststo r4: regress dep_pp any_pen_broad `full', vce(cluster hh_id)
+
+Linear regression                               Number of obs     =     29,627
+                                                F(57, 22699)      =      15.84
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0320
+                                                Root MSE          =     26.094
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                   any_pen_broad |   .5116284    .343629     1.49   0.137    -.1619081    1.185165
+                             age |   -.040865   .2987908    -0.14   0.891    -.6265155    .5447854
+                                 |
+                     c.age#c.age |   .0002845   .0020517     0.14   0.890     -.003737    .0043061
+                                 |
+                        1.female |   .0530806   .3421778     0.16   0.877    -.6176113    .7237725
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .6519938   .4588085     1.42   0.155    -.2473022     1.55129
+Married, spouse not co-resident  |  -1.542992   1.532314    -1.01   0.314    -4.546432    1.460447
+                 Widowed, alone  |    5.25447   .9503329     5.53   0.000     3.391752    7.117187
+         Widowed, with children  |   1.585597   .4471329     3.55   0.000     .7091861    2.462008
+           Widowed, with others  |   5.599776    1.03452     5.41   0.000     3.572047    7.627505
+                Other unmarried  |   1.209392    .932018     1.30   0.194    -.6174272    3.036211
+                                 |
+                         1.urban |  -1.936078   .3894205    -4.97   0.000    -2.699369   -1.172788
+                       schooling |  -.1704722   .0398183    -4.28   0.000    -.2485188   -.0924255
+                                 |
+                           caste |
+                Scheduled Caste  |  -.0199428   .5373832    -0.04   0.970    -1.073251    1.033365
+                Scheduled Tribe  |  -3.043018   .5963569    -5.10   0.000    -4.211918   -1.874117
+                  None of these  |  -1.379686   .4640428    -2.97   0.003    -2.289242   -.4701308
+                                 |
+                        religion |
+                         Muslim  |   .5321378   .6712181     0.79   0.428    -.7834957    1.847771
+                      Christian  |   1.236211   .7298613     1.69   0.090     -.194367    2.666789
+                           Sikh  |  -1.667266    1.37985    -1.21   0.227    -4.371868    1.037335
+                          Other  |   1.181748   1.152008     1.03   0.305    -1.076266    3.439763
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.5336188   .5093416    -1.05   0.295    -1.531963    .4647257
+                       3 Middle  |  -1.212764   .4998335    -2.43   0.015    -2.192472   -.2330563
+                       4 Richer  |   .5600511   .5408514     1.04   0.300    -.5000546    1.620157
+                      5 Richest  |   1.527593   .5928396     2.58   0.010     .3655864    2.689599
+                                 |
+                         stateid |
+               Himachal Pradesh  |  -1.155282   1.511294    -0.76   0.445    -4.117522    1.806958
+                         Punjab  |    4.21404    1.78803     2.36   0.018     .7093781    7.718702
+                     Chandigarh  |   4.116368   1.861349     2.21   0.027     .4679961     7.76474
+                    Uttarakhand  |   1.349419    1.57382     0.86   0.391    -1.735377    4.434214
+                        Haryana  |     .14845   1.467227     0.10   0.919    -2.727416    3.024315
+                          Delhi  |   4.236661   1.725358     2.46   0.014       .85484    7.618482
+                      Rajasthan  |  -.5660317   1.414165    -0.40   0.689    -3.337892    2.205828
+                  Uttar Pradesh  |    8.43266   1.432166     5.89   0.000     5.625516     11.2398
+                          Bihar  |   5.089376   1.422886     3.58   0.000     2.300421    7.878331
+              Arunachal Pradesh  |  -4.580724   1.468045    -3.12   0.002    -7.458194   -1.703255
+                       Nagaland  |  -3.316546   1.466159    -2.26   0.024    -6.190317   -.4427743
+                        Manipur  |  -5.078221   1.271856    -3.99   0.000    -7.571146   -2.585296
+                        Mizoram  |  -3.334866   1.428027    -2.34   0.020    -6.133897   -.5358352
+                        Tripura  |  -1.385152    1.54739    -0.90   0.371    -4.418142    1.647838
+                      Meghalaya  |  -3.887979   1.457438    -2.67   0.008    -6.744658   -1.031301
+                          Assam  |   2.475839     1.5996     1.55   0.122    -.6594873    5.611165
+                    West Bengal  |    3.11438   1.397722     2.23   0.026     .3747497    5.854011
+                      Jharkhand  |   .3801176   1.392398     0.27   0.785    -2.349077    3.109312
+                         Odisha  |  -1.547106   1.353534    -1.14   0.253    -4.200126    1.105914
+                   Chhattisgarh  |  -.0109247   1.490314    -0.01   0.994    -2.932041    2.910192
+                 Madhya Pradesh  |   10.33954   1.625455     6.36   0.000      7.15354    13.52554
+                        Gujarat  |  -1.317026   1.360939    -0.97   0.333     -3.98456    1.350508
+                    Daman & Diu  |  -1.987733   1.529031    -1.30   0.194    -4.984739    1.009272
+           Dadra & Nagar Haveli  |   .0657936   1.596144     0.04   0.967    -3.062758    3.194345
+                    Maharashtra  |   3.582896   1.363687     2.63   0.009     .9099768    6.255815
+                 Andhra Pradesh  |  -3.931687   1.313238    -2.99   0.003    -6.505723   -1.357652
+                      Karnataka  |   1.324296   1.477863     0.90   0.370    -1.572416    4.221009
+                            Goa  |   9.191834   1.984569     4.63   0.000     5.301943    13.08173
+                    Lakshadweep  |   .8503362   1.498148     0.57   0.570    -2.086137     3.78681
+                         Kerala  |   .3262633   1.379258     0.24   0.813    -2.377176    3.029703
+                     Tamil Nadu  |  -2.585726   1.342148    -1.93   0.054    -5.216428    .0449758
+                     Puducherry  |   1.353646   1.684607     0.80   0.422    -1.948298     4.65559
+      Andaman & Nicobar Islands  |   -4.67308   1.352784    -3.45   0.001    -7.324628   -2.021531
+                      Telangana  |   -2.39052   1.353833    -1.77   0.077    -5.044124    .2630848
+                                 |
+                           _cons |   8.397396   10.81266     0.78   0.437    -12.79615    29.59094
+--------------------------------------------------------------------------------------------------
+
+. eststo r5: regress dep_pp any_pen c.age##c.age i.female `c_ses' `c_state',  ///
+>            vce(cluster hh_id)
+
+Linear regression                               Number of obs     =     29,627
+                                                F(47, 22699)      =      17.46
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0281
+                                                Root MSE          =     26.143
+
+                                           (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------
+                           |               Robust
+                    dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------+----------------------------------------------------------------
+                   any_pen |   .8459673   .3466201     2.44   0.015     .1665682    1.525366
+                       age |   .0352064   .2988884     0.12   0.906    -.5506352    .6210481
+                           |
+               c.age#c.age |    .000054   .0020542     0.03   0.979    -.0039725    .0040804
+                           |
+                  1.female |   .9585968   .3156261     3.04   0.002      .339948    1.577246
+                   1.urban |  -2.120436   .3868474    -5.48   0.000    -2.878683   -1.362188
+                 schooling |  -.1533295   .0381859    -4.02   0.000    -.2281764   -.0784825
+                           |
+                     caste |
+          Scheduled Caste  |   .0446325   .5371603     0.08   0.934    -1.008238    1.097503
+          Scheduled Tribe  |  -3.027008   .5948603    -5.09   0.000    -4.192975   -1.861041
+            None of these  |  -1.216025   .4640255    -2.62   0.009    -2.125547   -.3065031
+                           |
+                  religion |
+                   Muslim  |    .511914   .6712708     0.76   0.446    -.8038227    1.827651
+                Christian  |    1.34635   .7310616     1.84   0.066    -.0865805    2.779281
+                     Sikh  |  -1.427804   1.381028    -1.03   0.301    -4.134714    1.279105
+                    Other  |   1.305352   1.154944     1.13   0.258    -.9584186    3.569122
+                           |
+                   stateid |
+         Himachal Pradesh  |  -1.288469   1.514507    -0.85   0.395    -4.257007    1.680068
+                   Punjab  |   4.017742   1.790596     2.24   0.025     .5080501    7.527433
+               Chandigarh  |   4.187638   1.863475     2.25   0.025     .5350988    7.840178
+              Uttarakhand  |   1.239416   1.570442     0.79   0.430    -1.838757    4.317589
+                  Haryana  |  -.2574389   1.463502    -0.18   0.860    -3.126004    2.611126
+                    Delhi  |   3.869028   1.719589     2.25   0.024     .4985159     7.23954
+                Rajasthan  |  -.8030277   1.405145    -0.57   0.568    -3.557208    1.951152
+            Uttar Pradesh  |   8.191931   1.423165     5.76   0.000      5.40243    10.98143
+                    Bihar  |    4.73685   1.411415     3.36   0.001     1.970381    7.503319
+        Arunachal Pradesh  |  -4.371762   1.467628    -2.98   0.003    -7.248414    -1.49511
+                 Nagaland  |   -3.35528   1.462056    -2.29   0.022    -6.221009   -.4895505
+                  Manipur  |  -5.095375   1.267843    -4.02   0.000    -7.580434   -2.610316
+                  Mizoram  |  -3.772824   1.419507    -2.66   0.008    -6.555156   -.9904923
+                  Tripura  |  -1.474688   1.548684    -0.95   0.341    -4.510215    1.560839
+                Meghalaya  |  -4.127089   1.449669    -2.85   0.004     -6.96854   -1.285637
+                    Assam  |   2.208804   1.595215     1.38   0.166     -.917926    5.335533
+              West Bengal  |   3.082099   1.392865     2.21   0.027     .3519881    5.812209
+                Jharkhand  |  -.0589333   1.383217    -0.04   0.966    -2.770132    2.652266
+                   Odisha  |  -1.851704   1.338487    -1.38   0.167    -4.475229    .7718211
+             Chhattisgarh  |  -.0700554   1.480316    -0.05   0.962    -2.971576    2.831465
+           Madhya Pradesh  |   10.32352     1.6173     6.38   0.000     7.153505    13.49354
+                  Gujarat  |  -1.346954   1.350875    -1.00   0.319    -3.994762    1.300854
+              Daman & Diu  |  -1.794036   1.523444    -1.18   0.239     -4.78009    1.192018
+     Dadra & Nagar Haveli  |   -.316249    1.59045    -0.20   0.842     -3.43364    2.801142
+              Maharashtra  |   3.417036   1.354946     2.52   0.012     .7612484    6.072824
+           Andhra Pradesh  |  -3.603613   1.304638    -2.76   0.006    -6.160793   -1.046433
+                Karnataka  |   1.318209   1.471834     0.90   0.370    -1.566685    4.203104
+                      Goa  |   9.260585   1.990429     4.65   0.000     5.359208    13.16196
+              Lakshadweep  |   .7385299   1.494709     0.49   0.621    -2.191201    3.668261
+                   Kerala  |   .2378073   1.367923     0.17   0.862    -2.443416    2.919031
+               Tamil Nadu  |   -2.02614   1.327713    -1.53   0.127    -4.628548    .5762682
+               Puducherry  |   1.296786   1.671936     0.78   0.438    -1.980324    4.573895
+Andaman & Nicobar Islands  |  -4.844595    1.34573    -3.60   0.000    -7.482317   -2.206873
+                Telangana  |  -1.990937   1.344882    -1.48   0.139    -4.626998    .6451231
+                           |
+                     _cons |   4.732071   10.80592     0.44   0.661    -16.44827    25.91241
+--------------------------------------------------------------------------------------------
+
+. probit depressed i.any_pen `full', vce(cluster hh_id)
+
+Iteration 0:   log pseudolikelihood = -7964.7631  
+Iteration 1:   log pseudolikelihood = -7511.8814  
+Iteration 2:   log pseudolikelihood = -7493.3777  
+Iteration 3:   log pseudolikelihood = -7493.1899  
+Iteration 4:   log pseudolikelihood = -7493.1897  
+
+Probit regression                                       Number of obs = 29,627
+                                                        Wald chi2(57) = 772.96
+                                                        Prob > chi2   = 0.0000
+Log pseudolikelihood = -7493.1897                       Pseudo R2     = 0.0592
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                       depressed | Coefficient  std. err.      z    P>|z|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                       1.any_pen |   .0337952    .025275     1.34   0.181    -.0157429    .0833332
+                             age |  -.0039523   .0208074    -0.19   0.849    -.0447341    .0368295
+                                 |
+                     c.age#c.age |   .0000272   .0001416     0.19   0.848    -.0002503    .0003047
+                                 |
+                        1.female |  -.0050527   .0251778    -0.20   0.841    -.0544003    .0442949
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .0470869   .0353242     1.33   0.183    -.0221472     .116321
+Married, spouse not co-resident  |   -.128532   .1496944    -0.86   0.391    -.4219276    .1648637
+                 Widowed, alone  |   .3477602   .0530836     6.55   0.000     .2437183    .4518021
+         Widowed, with children  |   .1248642   .0321294     3.89   0.000     .0618918    .1878366
+           Widowed, with others  |   .3521292   .0551228     6.39   0.000     .2440905     .460168
+                Other unmarried  |   .1010128   .0756292     1.34   0.182    -.0472176    .2492433
+                                 |
+                         1.urban |  -.1478465   .0306903    -4.82   0.000    -.2079984   -.0876946
+                       schooling |  -.0132413   .0031869    -4.15   0.000    -.0194875   -.0069951
+                                 |
+                           caste |
+                Scheduled Caste  |  -.0002967   .0345165    -0.01   0.993    -.0679478    .0673543
+                Scheduled Tribe  |  -.2227141   .0490908    -4.54   0.000    -.3189302    -.126498
+                  None of these  |  -.0921544   .0323442    -2.85   0.004    -.1555478   -.0287611
+                                 |
+                        religion |
+                         Muslim  |   .0396451   .0426096     0.93   0.352    -.0438682    .1231585
+                      Christian  |   .0944497   .0673412     1.40   0.161    -.0375366     .226436
+                           Sikh  |   -.111014   .0969636    -1.14   0.252    -.3010592    .0790311
+                          Other  |   .0909658   .0934722     0.97   0.330    -.0922363    .2741678
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.0390118   .0366618    -1.06   0.287    -.1108676    .0328439
+                       3 Middle  |  -.0912973   .0378718    -2.41   0.016    -.1655247     -.01707
+                       4 Richer  |   .0390498   .0381179     1.02   0.306    -.0356599    .1137594
+                      5 Richest  |   .1102991   .0406467     2.71   0.007     .0306331    .1899651
+                                 |
+                         stateid |
+               Himachal Pradesh  |  -.0924655   .1273744    -0.73   0.468    -.3421148    .1571837
+                         Punjab  |   .2878444   .1277605     2.25   0.024     .0374384    .5382504
+                     Chandigarh  |   .3146642   .1337806     2.35   0.019      .052459    .5768693
+                    Uttarakhand  |   .1023343   .1188805     0.86   0.389    -.1306671    .3353358
+                        Haryana  |   .0264864   .1149794     0.23   0.818    -.1988691    .2518419
+                          Delhi  |   .3156398   .1239072     2.55   0.011     .0727861    .5584934
+                      Rajasthan  |  -.0342871    .112755    -0.30   0.761    -.2552827    .1867086
+                  Uttar Pradesh  |   .4813684   .0980108     4.91   0.000     .2892707     .673466
+                          Bihar  |   .3222788   .0995793     3.24   0.001      .127107    .5174506
+              Arunachal Pradesh  |  -.6313127   .2220608    -2.84   0.004    -1.066544   -.1960815
+                       Nagaland  |  -.4353733   .1632762    -2.67   0.008    -.7553888   -.1153577
+                        Manipur  |  -.7561454   .1843847    -4.10   0.000    -1.117533   -.3947581
+                        Mizoram  |  -.6667197   .2037719    -3.27   0.001    -1.066105   -.2673341
+                        Tripura  |  -.1262904   .1359138    -0.93   0.353    -.3926765    .1400956
+                      Meghalaya  |  -.5324246   .1871041    -2.85   0.004    -.8991418   -.1657074
+                          Assam  |   .1808301   .1162354     1.56   0.120    -.0469871    .4086474
+                    West Bengal  |   .2272378   .1039512     2.19   0.029     .0234972    .4309784
+                      Jharkhand  |   .0394595   .1090133     0.36   0.717    -.1742026    .2531216
+                         Odisha  |  -.1311818   .1134433    -1.16   0.248    -.3535265    .0911629
+                   Chhattisgarh  |   .0117157   .1184397     0.10   0.921    -.2204219    .2438533
+                 Madhya Pradesh  |   .5591239   .1020955     5.48   0.000     .3590204    .7592273
+                        Gujarat  |  -.1270235   .1180172    -1.08   0.282     -.358333     .104286
+                    Daman & Diu  |  -.1803045   .1470875    -1.23   0.220    -.4685907    .1079816
+           Dadra & Nagar Haveli  |  -.0110337   .1430125    -0.08   0.939    -.2913331    .2692657
+                    Maharashtra  |   .2485689   .1014356     2.45   0.014     .0497588    .4473791
+                 Andhra Pradesh  |  -.3623845   .1197784    -3.03   0.002    -.5971458   -.1276233
+                      Karnataka  |   .1097553   .1091564     1.01   0.315    -.1041873    .3236979
+                            Goa  |   .5362903   .1154785     4.64   0.000     .3099566    .7626241
+                    Lakshadweep  |   .0193714   .1422285     0.14   0.892    -.2593914    .2981342
+                         Kerala  |   .0313935   .1099222     0.29   0.775    -.1840501    .2468371
+                     Tamil Nadu  |   -.230348    .112593    -2.05   0.041    -.4510263   -.0096697
+                     Puducherry  |   .1036447   .1271199     0.82   0.415    -.1455058    .3527952
+      Andaman & Nicobar Islands  |  -.6149437   .1904998    -3.23   0.001    -.9883165   -.2415709
+                      Telangana  |  -.1811538   .1136107    -1.59   0.111    -.4038267    .0415192
+                                 |
+                           _cons |  -1.357333   .7615004    -1.78   0.075    -2.849846    .1351802
+--------------------------------------------------------------------------------------------------
+
+. eststo r6: margins, dydx(any_pen) expression(100*predict(pr)) post
+
+Average marginal effects                                Number of obs = 29,627
+Model VCE: Robust
+
+Expression: 100*predict(pr)
+dy/dx wrt:  1.any_pen
+
+------------------------------------------------------------------------------
+             |            Delta-method
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+   1.any_pen |   .4591033   .3449483     1.33   0.183     -.216983     1.13519
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+
+. 
+. esttab m5 r2 r3 r4 r5 r6 using "$tables/table4_robustness.tex",             ///
+>     replace booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)        ///
+>     rename(any_pen_broad any_pen 1.any_pen any_pen)                        ///
+>     keep(any_pen)                                                          ///
+>     mtitles("Preferred" "Weighted" "Village SE" "Broad" "Lean" "Probit")   ///
+>     stats(N, fmt(%9.0fc) labels("Observations"))                           ///
+>     title("Robustness of the pension coefficient\label{tab:robust}")      ///
+>     addnotes("(1) Table 2, column 5. (2) LASI national weights. (3) Clustered by village/ward." ///
+>              "(4) Adds expected work-related pensions. (5) Drops MPCE and household structure." ///
+>              "(6) Probit average marginal effect. Coefficients in percentage points.")
+(output written to D:/Predoc_files/lasi-pensions-depression/output/tables/table4_robustness.tex)
+
+. 
+. *------------------------------------------------------------------------------
+. * Table 5 (appendix): heterogeneity
+. *   Each column interacts pension receipt with one group indicator. The
+. *   pension row is the association outside the group; the interaction row is
+. *   the difference within it, and its t-test is the test of heterogeneity.
+. *   Female and urban main effects are already in `full'; the other two groups
+. *   need their own main effect.
+. *------------------------------------------------------------------------------
+. local main_female   ""
+
+. local main_urban    ""
+
+. local main_old70    "old70"
+
+. local main_bpl_card "bpl_card"
+
+. 
+. foreach g in female urban old70 bpl_card {
+  2.     capture drop pen_x_group
+  3.     gen byte pen_x_group = any_pen * `g'
+  4.     label variable pen_x_group "Pension x group"
+  5.     eststo h_`g': regress dep_pp any_pen pen_x_group `main_`g'' `full',    ///
+>                   vce(cluster hh_id)
+  6. }
+
+Linear regression                               Number of obs     =     29,627
+                                                F(58, 22699)      =      15.58
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0320
+                                                Root MSE          =     26.094
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                         any_pen |   .8091495   .4546039     1.78   0.075    -.0819054    1.700204
+                     pen_x_group |  -.5095577   .6278092    -0.81   0.417    -1.740107    .7209913
+                             age |  -.0536402   .2992113    -0.18   0.858    -.6401148    .5328344
+                                 |
+                     c.age#c.age |   .0003595   .0020539     0.18   0.861    -.0036662    .0043852
+                                 |
+                        1.female |    .228748   .3956533     0.58   0.563    -.5467596    1.004256
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .6474563   .4588938     1.41   0.158     -.252007     1.54692
+Married, spouse not co-resident  |  -1.533257   1.533072    -1.00   0.317    -4.538183    1.471669
+                 Widowed, alone  |   5.300545   .9546349     5.55   0.000     3.429395    7.171694
+         Widowed, with children  |   1.617449   .4508623     3.59   0.000      .733728     2.50117
+           Widowed, with others  |   5.627289    1.03475     5.44   0.000     3.599108    7.655469
+                Other unmarried  |   1.218678    .932517     1.31   0.191    -.6091192    3.046475
+                                 |
+                         1.urban |  -1.944125   .3896956    -4.99   0.000    -2.707955   -1.180295
+                       schooling |  -.1712725   .0398487    -4.30   0.000    -.2493786   -.0931664
+                                 |
+                           caste |
+                Scheduled Caste  |  -.0196466   .5373061    -0.04   0.971    -1.072803     1.03351
+                Scheduled Tribe  |   -3.04431   .5964054    -5.10   0.000    -4.213305   -1.875315
+                  None of these  |  -1.380298   .4639536    -2.98   0.003    -2.289679   -.4709171
+                                 |
+                        religion |
+                         Muslim  |   .5354837   .6711684     0.80   0.425    -.7800523     1.85102
+                      Christian  |   1.232594   .7295918     1.69   0.091    -.1974559    2.662644
+                           Sikh  |  -1.670722   1.379886    -1.21   0.226    -4.375392    1.033949
+                          Other  |    1.18293   1.152548     1.03   0.305    -1.076142    3.442002
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.5339739   .5093918    -1.05   0.295    -1.532417    .4644689
+                       3 Middle  |  -1.216539   .4999746    -2.43   0.015    -2.196523   -.2365542
+                       4 Richer  |   .5561524   .5410422     1.03   0.304    -.5043274    1.616632
+                      5 Richest  |   1.519711   .5931908     2.56   0.010     .3570165    2.682406
+                                 |
+                         stateid |
+               Himachal Pradesh  |  -1.170379   1.511554    -0.77   0.439    -4.133129     1.79237
+                         Punjab  |   4.232722   1.788128     2.37   0.018     .7278684    7.737576
+                     Chandigarh  |   4.112497   1.861193     2.21   0.027      .464431    7.760563
+                    Uttarakhand  |   1.346293   1.574691     0.85   0.393     -1.74021    4.432795
+                        Haryana  |   .1523235   1.467838     0.10   0.917     -2.72474    3.029387
+                          Delhi  |   4.235903   1.725687     2.45   0.014     .8534383    7.618368
+                      Rajasthan  |   -.567659   1.414162    -0.40   0.688    -3.339514    2.204196
+                  Uttar Pradesh  |   8.436507   1.432051     5.89   0.000     5.629589    11.24343
+                          Bihar  |    5.08892    1.42282     3.58   0.000     2.300095    7.877744
+              Arunachal Pradesh  |  -4.556412   1.467713    -3.10   0.002    -7.433231   -1.679593
+                       Nagaland  |  -3.304726   1.466132    -2.25   0.024    -6.178445   -.4310067
+                        Manipur  |  -5.067423   1.271983    -3.98   0.000    -7.560595    -2.57425
+                        Mizoram  |  -3.304052   1.427944    -2.31   0.021     -6.10292   -.5051827
+                        Tripura  |    -1.3931   1.547067    -0.90   0.368    -4.425457    1.639256
+                      Meghalaya  |  -3.863093   1.457325    -2.65   0.008    -6.719549   -1.006638
+                          Assam  |     2.4848    1.59931     1.55   0.120    -.6499572    5.619557
+                    West Bengal  |   3.126735   1.397566     2.24   0.025     .3874104     5.86606
+                      Jharkhand  |   .3736833   1.392011     0.27   0.788    -2.354754     3.10212
+                         Odisha  |  -1.549498   1.353611    -1.14   0.252    -4.202668    1.103672
+                   Chhattisgarh  |  -.0026949   1.490341    -0.00   0.999    -2.923866    2.918476
+                 Madhya Pradesh  |   10.35041   1.625401     6.37   0.000     7.164515    13.53631
+                        Gujarat  |  -1.307686   1.360751    -0.96   0.337     -3.97485    1.359479
+                    Daman & Diu  |  -1.987807   1.529314    -1.30   0.194    -4.985368    1.009753
+           Dadra & Nagar Haveli  |   .0698845   1.596311     0.04   0.965    -3.058994    3.198763
+                    Maharashtra  |   3.583256   1.363368     2.63   0.009     .9109602    6.255551
+                 Andhra Pradesh  |   -3.93712   1.313261    -3.00   0.003    -6.511201   -1.363039
+                      Karnataka  |   1.329782   1.477561     0.90   0.368    -1.566339    4.225902
+                            Goa  |   9.194043   1.984395     4.63   0.000     5.304492    13.08359
+                    Lakshadweep  |   .8449037   1.497873     0.56   0.573    -2.091029    3.780837
+                         Kerala  |   .3428651   1.379403     0.25   0.804    -2.360859    3.046589
+                     Tamil Nadu  |  -2.573331   1.342053    -1.92   0.055    -5.203846     .057185
+                     Puducherry  |   1.358995   1.686514     0.81   0.420    -1.946687    4.664678
+      Andaman & Nicobar Islands  |  -4.681778   1.352253    -3.46   0.001    -7.332287   -2.031269
+                      Telangana  |  -2.392482   1.353519    -1.77   0.077    -5.045471    .2605078
+                                 |
+                           _cons |   8.810729    10.8276     0.81   0.416    -12.41211    30.03357
+--------------------------------------------------------------------------------------------------
+
+Linear regression                               Number of obs     =     29,627
+                                                F(58, 22699)      =      15.58
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0320
+                                                Root MSE          =     26.094
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                         any_pen |   .4649735   .4352675     1.07   0.285    -.3881806    1.318128
+                     pen_x_group |   .2691792   .6578351     0.41   0.682    -1.020223    1.558581
+                             age |   -.048308   .2990718    -0.16   0.872    -.6345093    .5378933
+                                 |
+                     c.age#c.age |   .0003309   .0020532     0.16   0.872    -.0036935    .0043552
+                                 |
+                        1.female |   .0543728   .3422163     0.16   0.874    -.6163945    .7251401
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .6493433   .4588386     1.42   0.157    -.2500118    1.548698
+Married, spouse not co-resident  |  -1.542817   1.533028    -1.01   0.314    -4.547658    1.462024
+                 Widowed, alone  |   5.245747   .9504551     5.52   0.000      3.38279    7.108704
+         Widowed, with children  |   1.581471   .4475625     3.53   0.000      .704218    2.458724
+           Widowed, with others  |   5.595057   1.034704     5.41   0.000     3.566967    7.623148
+                Other unmarried  |   1.206093   .9322102     1.29   0.196    -.6211027    3.033289
+                                 |
+                         1.urban |  -2.032412   .4560031    -4.46   0.000    -2.926209   -1.138615
+                       schooling |  -.1701014   .0397978    -4.27   0.000    -.2481078   -.0920949
+                                 |
+                           caste |
+                Scheduled Caste  |  -.0167277   .5371982    -0.03   0.975    -1.069673    1.036218
+                Scheduled Tribe  |  -3.041017   .5962386    -5.10   0.000    -4.209686   -1.872349
+                  None of these  |  -1.375646   .4639017    -2.97   0.003    -2.284925   -.4663672
+                                 |
+                        religion |
+                         Muslim  |   .5392651   .6713987     0.80   0.422    -.7767223    1.855253
+                      Christian  |   1.238411   .7299895     1.70   0.090    -.1924183    2.669241
+                           Sikh  |  -1.662542   1.379995    -1.20   0.228    -4.367427    1.042342
+                          Other  |   1.195186    1.15229     1.04   0.300    -1.063382    3.453753
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.5334383   .5095542    -1.05   0.295      -1.5322    .4653229
+                       3 Middle  |    -1.2108   .4998634    -2.42   0.015    -2.190566   -.2310333
+                       4 Richer  |    .563101   .5409304     1.04   0.298    -.4971596    1.623362
+                      5 Richest  |   1.532664   .5929248     2.58   0.010     .3704904    2.694837
+                                 |
+                         stateid |
+               Himachal Pradesh  |  -1.129606   1.511581    -0.75   0.455    -4.092409    1.833196
+                         Punjab  |   4.222195   1.787903     2.36   0.018     .7177826    7.726606
+                     Chandigarh  |   4.106622   1.861577     2.21   0.027     .4578036     7.75544
+                    Uttarakhand  |   1.383671   1.574092     0.88   0.379    -1.701657       4.469
+                        Haryana  |   .1440519   1.468836     0.10   0.922    -2.734968    3.023071
+                          Delhi  |    4.22537    1.72621     2.45   0.014     .8418803     7.60886
+                      Rajasthan  |  -.5493959    1.41681    -0.39   0.698    -3.326441    2.227649
+                  Uttar Pradesh  |   8.441678   1.431953     5.90   0.000     5.634953     11.2484
+                          Bihar  |   5.103957   1.422746     3.59   0.000     2.315277    7.892637
+              Arunachal Pradesh  |  -4.582524   1.468477    -3.12   0.002     -7.46084   -1.704208
+                       Nagaland  |  -3.300873   1.466236    -2.25   0.024    -6.174797   -.4269502
+                        Manipur  |  -5.068324   1.271867    -3.98   0.000    -7.561271   -2.575378
+                        Mizoram  |    -3.3042   1.428042    -2.31   0.021     -6.10326   -.5051399
+                        Tripura  |  -1.375455   1.547738    -0.89   0.374    -4.409126    1.658217
+                      Meghalaya  |  -3.870821   1.457181    -2.66   0.008    -6.726995   -1.014647
+                          Assam  |    2.49526     1.5997     1.56   0.119     -.640262    5.630783
+                    West Bengal  |   3.135388   1.397781     2.24   0.025     .3956408    5.875135
+                      Jharkhand  |   .3947907   1.392563     0.28   0.777    -2.334728     3.12431
+                         Odisha  |  -1.533928   1.354725    -1.13   0.258    -4.189282    1.121426
+                   Chhattisgarh  |   .0031082   1.490498     0.00   0.998     -2.91837    2.924586
+                 Madhya Pradesh  |   10.34955   1.625556     6.37   0.000     7.163352    13.53575
+                        Gujarat  |  -1.297411   1.360643    -0.95   0.340    -3.964364    1.369543
+                    Daman & Diu  |  -2.012643   1.528914    -1.32   0.188    -5.009419    .9841329
+           Dadra & Nagar Haveli  |   .0713053   1.595969     0.04   0.964    -3.056903    3.199514
+                    Maharashtra  |   3.602839   1.364049     2.64   0.008     .9292098    6.276469
+                 Andhra Pradesh  |  -3.923191   1.313535    -2.99   0.003    -6.497809   -1.348573
+                      Karnataka  |   1.335009   1.478064     0.90   0.366    -1.562097    4.232115
+                            Goa  |   9.190975   1.984216     4.63   0.000     5.301775    13.08018
+                    Lakshadweep  |   .8712098   1.498644     0.58   0.561    -2.066235    3.808655
+                         Kerala  |   .3353136   1.379322     0.24   0.808    -2.368253     3.03888
+                     Tamil Nadu  |  -2.558216   1.341968    -1.91   0.057    -5.188565    .0721332
+                     Puducherry  |   1.329236   1.687711     0.79   0.431    -1.978792    4.637264
+      Andaman & Nicobar Islands  |  -4.681146   1.352865    -3.46   0.001    -7.332853   -2.029438
+                      Telangana  |   -2.37631   1.354082    -1.75   0.079    -5.030404    .2777836
+                                 |
+                           _cons |   8.694562   10.82451     0.80   0.422    -12.52222    29.91134
+--------------------------------------------------------------------------------------------------
+
+Linear regression                               Number of obs     =     29,627
+                                                F(59, 22699)      =      15.31
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0321
+                                                Root MSE          =     26.095
+
+                                                 (Std. err. adjusted for 22,700 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                         any_pen |   .5361486   .4420156     1.21   0.225    -.3302322    1.402529
+                     pen_x_group |   .0238316   .6538637     0.04   0.971    -1.257786    1.305449
+                           old70 |  -.5504346   .6495341    -0.85   0.397    -1.823566    .7226967
+                             age |   .1085975   .3359753     0.32   0.747    -.5499372    .7671322
+                                 |
+                     c.age#c.age |   -.000549   .0022208    -0.25   0.805    -.0049019     .003804
+                                 |
+                        1.female |   .0479207   .3419013     0.14   0.889    -.6222294    .7180707
+                                 |
+                        hhstruct |
+      Married, with spouse only  |    .651208   .4588668     1.42   0.156    -.2482024    1.550618
+Married, spouse not co-resident  |   -1.54066    1.53322    -1.00   0.315    -4.545877    1.464557
+                 Widowed, alone  |   5.252277   .9506665     5.52   0.000     3.388905    7.115648
+         Widowed, with children  |   1.586867   .4480997     3.54   0.000      .708561    2.465173
+           Widowed, with others  |   5.595784   1.034836     5.41   0.000     3.567435    7.624133
+                Other unmarried  |   1.197134   .9317505     1.28   0.199    -.6291602    3.023429
+                                 |
+                         1.urban |  -1.933384   .3894207    -4.96   0.000    -2.696675   -1.170092
+                       schooling |  -.1713262   .0398159    -4.30   0.000    -.2493681   -.0932843
+                                 |
+                           caste |
+                Scheduled Caste  |  -.0179946   .5374648    -0.03   0.973    -1.071462    1.035473
+                Scheduled Tribe  |  -3.044373   .5966011    -5.10   0.000    -4.213752   -1.874994
+                  None of these  |  -1.373442   .4641229    -2.96   0.003    -2.283155   -.4637293
+                                 |
+                        religion |
+                         Muslim  |   .5347014   .6712736     0.80   0.426    -.7810409    1.850444
+                      Christian  |   1.227444   .7294935     1.68   0.092    -.2024129    2.657301
+                           Sikh  |  -1.667016    1.38014    -1.21   0.227    -4.372184    1.038152
+                          Other  |   1.183608   1.152066     1.03   0.304    -1.074519    3.441736
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.5323071   .5094507    -1.04   0.296    -1.530865    .4662512
+                       3 Middle  |  -1.211277   .5000301    -2.42   0.015    -2.191371   -.2311842
+                       4 Richer  |   .5595107   .5410423     1.03   0.301    -.5009693    1.619991
+                      5 Richest  |   1.525798   .5931542     2.57   0.010      .363175    2.688421
+                                 |
+                         stateid |
+               Himachal Pradesh  |   -1.11845   1.511122    -0.74   0.459    -4.080354    1.843453
+                         Punjab  |   4.231023   1.788032     2.37   0.018     .7263573    7.735689
+                     Chandigarh  |   4.134353   1.861368     2.22   0.026     .4859437    7.782763
+                    Uttarakhand  |   1.388001   1.574223     0.88   0.378    -1.697584    4.473586
+                        Haryana  |   .1548011   1.467349     0.11   0.916    -2.721304    3.030906
+                          Delhi  |   4.250148   1.725429     2.46   0.014     .8681892    7.632106
+                      Rajasthan  |  -.5587991   1.414401    -0.40   0.693    -3.331122    2.213524
+                  Uttar Pradesh  |   8.458466   1.432352     5.91   0.000     5.650958    11.26597
+                          Bihar  |   5.103489   1.422758     3.59   0.000     2.314786    7.892192
+              Arunachal Pradesh  |  -4.523177   1.467565    -3.08   0.002    -7.399705    -1.64665
+                       Nagaland  |  -3.273847   1.465967    -2.23   0.026    -6.147243   -.4004514
+                        Manipur  |  -5.055712    1.27154    -3.98   0.000    -7.548016   -2.563407
+                        Mizoram  |  -3.296727   1.428418    -2.31   0.021    -6.096523   -.4969308
+                        Tripura  |   -1.36695   1.547153    -0.88   0.377    -4.399476    1.665575
+                      Meghalaya  |  -3.841295   1.457326    -2.64   0.008    -6.697753   -.9848375
+                          Assam  |   2.514103   1.600116     1.57   0.116    -.6222344    5.650441
+                    West Bengal  |   3.141188   1.397425     2.25   0.025     .4021396    5.880237
+                      Jharkhand  |   .4044206    1.39232     0.29   0.771    -2.324622    3.133463
+                         Odisha  |  -1.542866   1.353605    -1.14   0.254    -4.196024    1.110292
+                   Chhattisgarh  |   .0120539   1.490203     0.01   0.994    -2.908846    2.932954
+                 Madhya Pradesh  |   10.36442   1.625373     6.38   0.000     7.178577    13.55026
+                        Gujarat  |  -1.301163    1.36077    -0.96   0.339    -3.968365    1.366039
+                    Daman & Diu  |  -1.979747   1.528966    -1.29   0.195    -4.976625    1.017131
+           Dadra & Nagar Haveli  |     .07189   1.595918     0.05   0.964    -3.056219    3.199999
+                    Maharashtra  |   3.611195   1.362851     2.65   0.008     .9399145    6.282476
+                 Andhra Pradesh  |  -3.930634    1.31315    -2.99   0.003    -6.504498   -1.356771
+                      Karnataka  |     1.3246   1.478016     0.90   0.370    -1.572412    4.221613
+                            Goa  |   9.206386   1.984745     4.64   0.000      5.31615    13.09662
+                    Lakshadweep  |   .8689089   1.497872     0.58   0.562    -2.067024    3.804841
+                         Kerala  |   .3402669   1.379614     0.25   0.805    -2.363871    3.044405
+                     Tamil Nadu  |  -2.557379   1.342073    -1.91   0.057    -5.187933    .0731759
+                     Puducherry  |   1.357343   1.686345     0.80   0.421     -1.94801    4.662695
+      Andaman & Nicobar Islands  |  -4.652901   1.352563    -3.44   0.001    -7.304016   -2.001786
+                      Telangana  |  -2.373963   1.353771    -1.75   0.080    -5.027447    .2795208
+                                 |
+                           _cons |   2.298433   12.50075     0.18   0.854    -22.20389    26.80076
+--------------------------------------------------------------------------------------------------
+(679 missing values generated)
+
+Linear regression                               Number of obs     =     28,948
+                                                F(59, 22130)      =      15.18
+                                                Prob > F          =     0.0000
+                                                R-squared         =     0.0324
+                                                Root MSE          =     26.246
+
+                                                 (Std. err. adjusted for 22,131 clusters in hh_id)
+--------------------------------------------------------------------------------------------------
+                                 |               Robust
+                          dep_pp | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------------------+----------------------------------------------------------------
+                         any_pen |   .3712051   .4889872     0.76   0.448    -.5872446    1.329655
+                     pen_x_group |   .2421556   .6611449     0.37   0.714    -1.053735    1.538047
+                        bpl_card |   1.504254   .4619452     3.26   0.001     .5988088      2.4097
+                             age |   .0153373   .3015595     0.05   0.959    -.5757408    .6064153
+                                 |
+                     c.age#c.age |  -.0000646   .0020684    -0.03   0.975    -.0041188    .0039897
+                                 |
+                        1.female |   .0704273   .3477266     0.20   0.839    -.6111415    .7519962
+                                 |
+                        hhstruct |
+      Married, with spouse only  |   .5766065   .4664766     1.24   0.216    -.3377208    1.490934
+Married, spouse not co-resident  |  -1.535493   1.550744    -0.99   0.322    -4.575062    1.504075
+                 Widowed, alone  |   5.122908   .9539603     5.37   0.000     3.253078    6.992738
+         Widowed, with children  |   1.551746   .4548298     3.41   0.001     .6602473    2.443245
+           Widowed, with others  |   5.425581   1.051159     5.16   0.000     3.365234    7.485928
+                Other unmarried  |    1.18568   .9492111     1.25   0.212    -.6748412    3.046202
+                                 |
+                         1.urban |  -1.654775   .4003405    -4.13   0.000    -2.439471   -.8700791
+                       schooling |  -.1395445   .0412416    -3.38   0.001    -.2203809    -.058708
+                                 |
+                           caste |
+                Scheduled Caste  |  -.2336653   .5482208    -0.43   0.670    -1.308217    .8408865
+                Scheduled Tribe  |  -3.202584   .6117118    -5.24   0.000    -4.401583   -2.003585
+                  None of these  |  -1.285938   .4733465    -2.72   0.007     -2.21373   -.3581448
+                                 |
+                        religion |
+                         Muslim  |   .5873094   .6868534     0.86   0.393    -.7589722    1.933591
+                      Christian  |   1.313157   .7466295     1.76   0.079      -.15029    2.776604
+                           Sikh  |  -1.463619   1.409655    -1.04   0.299    -4.226642    1.299405
+                          Other  |   1.360523   1.178738     1.15   0.248    -.9498868    3.670933
+                                 |
+                   mpce_quintile |
+                       2 Poorer  |  -.4684109   .5217341    -0.90   0.369    -1.491047     .554225
+                       3 Middle  |  -1.034843   .5143246    -2.01   0.044    -2.042956   -.0267304
+                       4 Richer  |   .7609067   .5559582     1.37   0.171    -.3288111    1.850624
+                      5 Richest  |   1.761256   .6096444     2.89   0.004     .5663099    2.956203
+                                 |
+                         stateid |
+               Himachal Pradesh  |  -.9813724   1.519793    -0.65   0.518    -3.960275     1.99753
+                         Punjab  |   5.011843   1.825371     2.75   0.006     1.433985    8.589701
+                     Chandigarh  |   4.675541   1.894288     2.47   0.014     .9626031     8.38848
+                    Uttarakhand  |   1.632675   1.586621     1.03   0.303    -1.477216    4.742566
+                        Haryana  |   .6345319   1.485799     0.43   0.669     -2.27774    3.546804
+                          Delhi  |   4.319443   1.734133     2.49   0.013       .92042    7.718466
+                      Rajasthan  |   .0730809   1.427215     0.05   0.959    -2.724363    2.870524
+                  Uttar Pradesh  |   8.816954   1.445216     6.10   0.000     5.984227    11.64968
+                          Bihar  |   5.139723   1.427886     3.60   0.000     2.340964    7.938481
+              Arunachal Pradesh  |  -4.560365   1.480463    -3.08   0.002    -7.462179   -1.658552
+                       Nagaland  |  -3.563033   1.474411    -2.42   0.016    -6.452983   -.6730822
+                        Manipur  |  -5.368138     1.2869    -4.17   0.000    -7.890553   -2.845722
+                        Mizoram  |  -3.121561   1.445761    -2.16   0.031    -5.955356   -.2877655
+                        Tripura  |  -1.237571   1.563961    -0.79   0.429    -4.303046    1.827903
+                      Meghalaya  |  -3.916553   1.467949    -2.67   0.008    -6.793837   -1.039269
+                          Assam  |   2.534301   1.603323     1.58   0.114    -.6083256    5.676927
+                    West Bengal  |   3.180329   1.408364     2.26   0.024     .4198357    5.940823
+                      Jharkhand  |   .4254778   1.401124     0.30   0.761    -2.320826    3.171781
+                         Odisha  |  -1.421799    1.36231    -1.04   0.297    -4.092024    1.248425
+                   Chhattisgarh  |  -.0917665   1.510289    -0.06   0.952    -3.052041    2.868508
+                 Madhya Pradesh  |   10.54349   1.636383     6.44   0.000     7.336068    13.75092
+                        Gujarat  |  -.8878033     1.3903    -0.64   0.523    -3.612891    1.837284
+                    Daman & Diu  |  -1.094615   1.638118    -0.67   0.504    -4.305444    2.116213
+           Dadra & Nagar Haveli  |   1.267745   1.744757     0.73   0.467    -2.152102    4.687592
+                    Maharashtra  |   3.786263   1.371755     2.76   0.006     1.097526       6.475
+                 Andhra Pradesh  |  -4.395209   1.332295    -3.30   0.001    -7.006603   -1.783815
+                      Karnataka  |    1.00751   1.495759     0.67   0.501    -1.924283    3.939304
+                            Goa  |   9.630597   2.014818     4.78   0.000      5.68141    13.57978
+                    Lakshadweep  |   1.304474   1.531037     0.85   0.394    -1.696467    4.305415
+                         Kerala  |   .5840668   1.404698     0.42   0.678    -2.169241    3.337374
+                     Tamil Nadu  |  -2.864926   1.357318    -2.11   0.035    -5.525366    -.204487
+                     Puducherry  |   1.284959    1.69736     0.76   0.449    -2.041987    4.611905
+      Andaman & Nicobar Islands  |  -4.161491   1.369145    -3.04   0.002    -6.845111    -1.47787
+                      Telangana  |   -2.77107   1.374566    -2.02   0.044    -5.465317   -.0768223
+                                 |
+                           _cons |   5.034203   10.93818     0.46   0.645     -16.4054    26.47381
+--------------------------------------------------------------------------------------------------
+
+. 
+. esttab h_female h_urban h_old70 h_bpl_card                                  ///
+>     using "$tables/table5_heterogeneity.tex",                              ///
+>     replace booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)        ///
+>     keep(any_pen pen_x_group)                                              ///
+>     mtitles("Women" "Urban" "Aged 70+" "BPL card")                         ///
+>     stats(N, fmt(%9.0fc) labels("Observations"))                           ///
+>     title("Heterogeneity in the pension coefficient\label{tab:het}")      ///
+>     addnotes("Group in column heading interacted with pension receipt; full controls as in Table 2, column 5.")
+(output written to D:/Predoc_files/lasi-pensions-depression/output/tables/table5_heterogeneity.tex)
+
+. drop pen_x_group                         // kept until here so esttab can use its label
+
+. 
+. *------------------------------------------------------------------------------
+. * Figure 1: pension coefficients from the preferred specification
+. *------------------------------------------------------------------------------
+. coefplot (m5, keep(any_pen))                                                ///
+>          (t2, keep(work_pen oldage_pen widow_pen other_social)),            ///
+>     xline(0, lpattern(dash) lcolor(gs8)) nooffsets legend(off)              ///
+>     mcolor(black) ciopts(lcolor(black))                                     ///
+>     coeflabels(any_pen      = "Any pension"                                 ///
+>                work_pen     = "Work-related pension"                        ///
+>                oldage_pen   = "National old-age pension"                    ///
+>                widow_pen    = "Widow pension"                               ///
+>                other_social = "Other social pension")                       ///
+>     xtitle("Difference in depression prevalence (percentage points)")       ///
+>     graphregion(color(white))
+
+. graph export "$figs/figure1_coefplot.pdf", replace
+file D:/Predoc_files/lasi-pensions-depression/output/figures/figure1_coefplot.pdf saved as PDF format
+
+. 
+. *------------------------------------------------------------------------------
+. * Numbers quoted in the text: estimates with 95% confidence intervals
+. *------------------------------------------------------------------------------
+. estimates restore m5
+(results m5 are active now)
+
+. lincom any_pen                           // preferred estimate
+
+ ( 1)  any_pen = 0
+
+------------------------------------------------------------------------------
+      dep_pp | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         (1) |   .5536631   .3488961     1.59   0.113    -.1301971    1.237523
+------------------------------------------------------------------------------
+
+. estimates restore t1
+(results t1 are active now)
+
+. lincom work_pen
+
+ ( 1)  work_pen = 0
+
+------------------------------------------------------------------------------
+      dep_pp | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         (1) |  -.2704235   .5790552    -0.47   0.640    -1.405411    .8645643
+------------------------------------------------------------------------------
+
+. lincom social_pen
+
+ ( 1)  social_pen = 0
+
+------------------------------------------------------------------------------
+      dep_pp | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         (1) |   .7009531   .3922615     1.79   0.074    -.0679063    1.469812
+------------------------------------------------------------------------------
+
+. lincom work_pen - social_pen             // do the two pension types differ?
+
+ ( 1)  work_pen - social_pen = 0
+
+------------------------------------------------------------------------------
+      dep_pp | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         (1) |  -.9713766   .6728459    -1.44   0.149    -2.290201    .3474476
+------------------------------------------------------------------------------
+
+. 
+end of do-file
+
+. 
+. log close
+      name:  <unnamed>
+       log:  D:/Predoc_files/lasi-pensions-depression/output/logs/master.log
+  log type:  text
+ closed on:  10 Oct 2026, 01:16:18
+-------------------------------------------------------------------------------------------------------------------

@@ -1,0 +1,21 @@
+\begin{table}[htbp]\centering
+\def\sym#1{\ifmmode^{#1}\else\(^{#1}\)\fi}
+\caption{Heterogeneity in the pension coefficient\label{tab:het}}
+\begin{tabular}{l*{4}{c}}
+\toprule
+                    &\multicolumn{1}{c}{(1)}&\multicolumn{1}{c}{(2)}&\multicolumn{1}{c}{(3)}&\multicolumn{1}{c}{(4)}\\
+                    &\multicolumn{1}{c}{Women}&\multicolumn{1}{c}{Urban}&\multicolumn{1}{c}{Aged 70+}&\multicolumn{1}{c}{BPL card}\\
+\midrule
+Receives any pension&        0.81\sym{*}  &        0.46         &        0.54         &        0.37         \\
+                    &      (0.45)         &      (0.44)         &      (0.44)         &      (0.49)         \\
+\addlinespace
+Pension x group     &       -0.51         &        0.27         &        0.02         &        0.24         \\
+                    &      (0.63)         &      (0.66)         &      (0.65)         &      (0.66)         \\
+\midrule
+Observations        &      29,627         &      29,627         &      29,627         &      28,948         \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize Standard errors in parentheses}\\
+\multicolumn{5}{l}{\footnotesize Group in column heading interacted with pension receipt; full controls as in Table 2, column 5.}\\
+\multicolumn{5}{l}{\footnotesize \sym{*} \(p<0.10\), \sym{**} \(p<0.05\), \sym{***} \(p<0.01\)}\\
+\end{tabular}
+\end{table}

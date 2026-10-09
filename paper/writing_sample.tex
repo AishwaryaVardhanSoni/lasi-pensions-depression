@@ -1,0 +1,422 @@
+%==============================================================================
+% writing_sample.tex -- revised draft
+%
+% Red text (\todo{...}) marks what still needs writing, or numbers to take
+% from the tables and the log produced by master.do. The final version should
+% contain no \todo at all: search for it before submitting.
+%
+% To compile in Overleaf: upload this file, create folders tables/ and
+% figures/, and upload into them the contents of output/tables and
+% output/figures from the repository.
+%==============================================================================
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{setspace}
+\usepackage{xcolor}
+\usepackage[round]{natbib}
+\usepackage[hidelinks]{hyperref}
+\onehalfspacing
+
+\newcommand{\todo}[1]{\textcolor{red}{[#1]}}
+
+\title{Pension Receipt and Depression among Older Adults in India\thanks{This
+paper began as a term paper for Econometrics I at the Indian Statistical
+Institute, Delhi, taught by Abhiroop Mukhopadhyay, and has since been revised.
+Replication code: \todo{GitHub link}. \todo{Acknowledgments, if any.} All
+errors are my own.}}
+\author{Aishwarya Vardhan Soni\\ Indian Statistical Institute, Delhi}
+\date{\todo{Month} 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent\todo{Write 120--150 words, in this order. (1) Question and data:
+LASI Wave 1 (2017--18), 29,627 adults aged 60 and above. (2) Outcome: probable
+major depression from the CIDI-SF. (3) The preferred estimate (Table 2,
+column 5) with its 95\% confidence interval, against a weighted prevalence of
+9.2\%, and what it rules out. (4) The selection finding from Tables 1 and 3:
+how recipients of work-related and social pensions differ, and what the
+separate estimates show. (5) One sentence on what this implies for reading
+cross-sectional evidence on pensions and mental health.}
+\end{abstract}
+
+\medskip
+\noindent\textbf{Keywords:} pensions, depression, ageing, social protection, India\\
+\noindent\textbf{JEL codes:} H55, I12, I38, J14
+
+\newpage
+
+%------------------------------------------------------------------------------
+\section{Introduction}
+%------------------------------------------------------------------------------
+
+As life expectancy in India rises and the share of older adults grows, income
+security, health, and well-being in later life have become central questions
+for public policy. Pensions are the main instrument designed to support older
+citizens: they provide a stable income after work ends and reduce
+vulnerability in old age. Beyond this financial role, pension income may also
+affect mental health, by lowering financial stress and reducing dependence on
+family members. \todo{Add one concrete fact: the share of adults aged 60+ who
+receive any pension, and how much of that is social rather than work-related
+pensions (Table~\ref{tab:desc}).}
+
+Depression among older adults is common but receives little policy attention.
+In later life it is linked to declining physical health, social isolation,
+widowhood, reduced mobility, and economic insecurity. In LASI, 9.2 percent of
+adults aged 60 and above meet the criteria for probable major depression. For
+many older Indians, especially in poorer households, mental well-being depends
+not only on health but on household structure, social status, and whether they
+have a regular income, which makes pension receipt a natural candidate for
+study.
+
+\todo{Paragraph 3: the question and why it is hard. Pensions could reduce
+depression, but receipt is not random. Work-related pensions go to former
+formal-sector workers, who are more educated, more urban, and better off.
+Social pensions are targeted: the national old-age pension requires a
+below-poverty-line household, and the widow pension requires widowhood, both of
+which predict depression. Selection therefore runs in opposite directions for
+the two kinds of pension, and a pooled comparison mixes the two biases.}
+
+\todo{Paragraph 4: what the paper does and finds, with numbers. Data and
+outcome in one sentence; the pooled estimate and its confidence interval; what
+it rules out relative to prevalence; the separate estimates for work-related
+and social pensions (Table~\ref{tab:type}); what happens when ration-card type,
+the eligibility rule, is controlled for; robustness in one clause.}
+
+\todo{Paragraph 5: contribution. Relate the paper to \citet{CaseDeaton1998} on
+South Africa's old-age pension; to \citet{Kaushal2014} and
+\citet{UnnikrishnanImai2020} on India's old-age pension and household welfare;
+and to \citet{GalianiGertlerBando2016}, who use age and geographic eligibility
+cutoffs in Mexico and find that a non-contributory pension lowers depression
+scores. Say in one or two sentences what this paper adds: evidence from India's
+national ageing survey on how selection into pensions shapes naive
+comparisons. End with a one-sentence roadmap.}
+
+%------------------------------------------------------------------------------
+\section{Data}
+%------------------------------------------------------------------------------
+
+\subsection{The Longitudinal Ageing Study in India}
+
+The analysis uses Wave 1 of the Longitudinal Ageing Study in India (LASI),
+fielded in 2017--18 \citep{IIPS2020report, IIPS2020guide}. LASI is a nationally
+representative survey of adults aged 45 and above and their spouses, covering
+every state and union territory except Sikkim. Its questionnaire is harmonised
+with the Health and Retirement Study and covers demographics, work and
+retirement, pensions and social welfare schemes, health, and mental health.
+Because it records depressive symptoms and pension receipt for the same
+respondents, it is well suited to this question.
+
+\subsection{Sample}
+
+The population of interest is adults aged 60 and above, the group to whom
+LASI's social-pension questions are addressed. Wave 1 interviewed 72,250
+individuals, of whom 31,464 were aged 60 or above. I exclude 818 respondents who
+were not administered the depression module (both screening questions missing,
+most likely proxy interviews), 1,018 with missing caste, and one with missing
+religion. The estimation sample contains 29,627 respondents in 22,700
+households.
+
+\subsection{Measuring depression}
+
+The outcome is an indicator of probable major depression constructed from the
+Composite International Diagnostic Interview -- Short Form
+\citep[CIDI-SF;][]{Kessler1998}, administered in questions MH201--MH223. The
+module has two screening pathways. The first begins with MH201, which asks
+whether the respondent felt sad, blue, or depressed for two weeks or more in a
+row during the past year; the second begins with MH214, which asks about a
+two-week period of lost interest in most things. In each pathway, the symptom
+questions are asked only if the episode lasted most of the day, nearly every
+day (MH202--MH203 and MH215--MH216). The depressed-mood pathway records seven
+symptoms (MH204--MH211) and the loss-of-interest pathway six (MH217--MH222);
+Appendix~\ref{app:construction} lists them.
+
+A respondent is classified as depressed if either pathway records three or
+more symptoms:
+\begin{equation*}
+  \text{Depressed}_i = \mathbf{1}\big[\max(\text{MoodSymptoms}_i,\ \text{InterestSymptoms}_i) \geq 3\big].
+\end{equation*}
+Because the symptom questions are reached only through a positive screen that
+meets the duration criteria, this preserves the two-stage structure of the
+CIDI-SF and avoids classifying respondents as depressed on the basis of
+isolated symptoms such as fatigue or poor sleep. Respondents who were never
+administered the module are treated as missing rather than as not depressed.
+In the estimation sample, 7.6 percent of respondents are classified as
+depressed, or 9.2 percent using LASI's national weights.
+
+\subsection{Measuring pension receipt}
+
+LASI records pensions in two places. The work, retirement and pension module
+asks respondents who work in, or have retired from, the organized sector
+whether they currently receive a pension or expect one in future (WE412). The
+social welfare module asks every respondent aged 60 and above, scheme by
+scheme, whether they are aware of it (SW201) and whether they currently avail
+its benefits (SW202). The cash schemes are the National Old Age Pension
+Scheme, which requires a below-poverty-line household; the widow pension,
+asked only of women; and other state or central pension schemes. I exclude the
+Annapurna scheme, which provides food grains rather than cash.
+
+The main treatment is current receipt of any pension:
+\begin{equation*}
+  \text{Pension}_i = \mathbf{1}\big[\text{WE412}_i = 1 \ \text{ or } \ \text{SW202}_{s,i} = 1 \text{ for some cash pension scheme } s\big].
+\end{equation*}
+Respondents who were not asked a question, because they never worked in the
+organized sector or were unaware of a scheme, are coded as not receiving that
+pension. A broader definition that adds respondents who expect a work-related
+pension in future (WE412 $= 2$) is used only as a robustness check, since they
+receive no pension income yet. Because the two kinds of pension reach very
+different people (Section~\ref{sec:who}), I also report work-related and
+social pensions separately, and social pensions by scheme.
+
+\subsection{Controls}
+
+The regressions control for characteristics that plausibly affect both pension
+receipt and mental health: age and its square; sex; household structure;
+urban residence; years of schooling (zero for respondents who never attended
+school); caste (Scheduled Caste, Scheduled Tribe, Other Backward Class, and
+none of these, with OBC as the reference group); religion (Hindu, Muslim,
+Christian, Sikh, and other, grouping categories with very few respondents);
+quintiles of monthly per capita consumption expenditure (MPCE); and state
+fixed effects.
+
+Household structure combines marital status and living arrangements into seven
+categories: married and living with a spouse only, or with a spouse and
+children; married with the spouse not co-resident; widowed and living alone,
+with children, or with others; and other unmarried respondents. The two
+variables cannot usefully enter separately, because no widowed respondent
+lives with a spouse: with both in the regression, the contrast between widowed
+and married respondents would be identified only from the 212 married
+respondents who live apart from their spouse.
+
+Finally, to capture the eligibility rule for the old-age pension directly, I
+merge from the household questionnaire whether the household holds a
+below-poverty-line (BPL) or Antyodaya ration card (CO301--CO302).
+
+%------------------------------------------------------------------------------
+\section{Empirical approach}\label{sec:method}
+%------------------------------------------------------------------------------
+
+I estimate linear probability models of the form
+\begin{equation}
+  100 \times \text{Depressed}_i = \beta\,\text{Pension}_i + \mathbf{X}_i'\gamma + \mu_{s(i)} + \varepsilon_i ,
+\end{equation}
+where $\mathbf{X}_i$ contains the controls described above and $\mu_{s(i)}$ is
+a fixed effect for respondent $i$'s state. Scaling the outcome by 100 makes
+$\beta$ the difference in the probability of depression, in percentage points,
+between pension recipients and otherwise similar non-recipients.
+Table~\ref{tab:main} adds the controls in four steps, from no controls to the
+preferred specification in column~5. State fixed effects absorb all
+state-level differences, including in pension coverage, benefit generosity,
+and health systems, so the preferred estimate compares recipients and
+non-recipients within the same state.
+
+Three choices deserve comment. First, MPCE and household structure are
+measured after pension receipt and may partly respond to it: a pension raises
+household spending \citep{Kaushal2014} and can change whom an older person
+lives with. Controlling for them may therefore absorb part of any effect
+\citep{AngristPischke2009}, so Appendix Table~\ref{tab:robust} also reports
+estimates without them. Second, several respondents are interviewed in each
+household, so standard errors are clustered by household; clustering instead
+by the village or urban ward from which LASI sampled households
+\todo{gives similar standard errors --- confirm from Table~\ref{tab:robust},
+column 3}. Because the outcome is binary, the errors are heteroskedastic by
+construction, and the clustered standard errors are robust to this. Third, the
+regressions are unweighted, since the controls include LASI's main design
+variables (state, urban residence, and age); estimates using LASI's national
+weights are reported as a robustness check \citep{SolonHaiderWooldridge2015}.
+Descriptive statistics are weighted.
+
+%------------------------------------------------------------------------------
+\section{Results}
+%------------------------------------------------------------------------------
+
+\subsection{Who receives a pension?}\label{sec:who}
+
+\input{tables/table1_descriptives.tex}
+
+\todo{Two paragraphs on Table~\ref{tab:desc}. (i) Coverage: the share
+receiving any pension, and how much of it is social pensions. (ii) Selection,
+with numbers from the table: compare work-pension recipients with
+non-recipients on schooling, urban residence, widowhood, BPL cards, and MPCE;
+then do the same for social-pension recipients, and note whether the
+differences run the other way, as the eligibility rules imply. (iii) Raw
+depression prevalence in each column. Close with one sentence on what this
+means for a pooled comparison.}
+
+\subsection{Pension receipt and depression}
+
+\input{tables/table2_main.tex}
+
+\todo{Two paragraphs on Table~\ref{tab:main}. (i) The estimate in each column;
+judge changes across columns against the standard errors rather than calling
+them large or small. (ii) The preferred estimate (column 5) with its 95\%
+confidence interval, from the \texttt{lincom} output at the end of the log,
+expressed relative to prevalence: for example, ``I can rule out that pension
+recipients are more than [x] percentage points less likely to be depressed,
+about [y] percent of the sample mean.'' Do not interpret the coefficients on
+the controls.}
+
+\subsection{Work-related and social pensions}
+
+\input{tables/table3_pension_type.tex}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\textwidth]{figures/figure1_coefplot.pdf}
+  \caption{Pension coefficients from the preferred specification. ``Any
+  pension'' is from Table~\ref{tab:main}, column 5; the remaining estimates are
+  from Table~\ref{tab:type}, column 2. Bars are 95\% confidence intervals.}
+  \label{fig:coefplot}
+\end{figure}
+
+\todo{Two or three paragraphs on Table~\ref{tab:type} and
+Figure~\ref{fig:coefplot}. (i) Work-related versus social pensions (column 1),
+and the test of whether they differ (the \texttt{lincom} of their difference
+in the log). (ii) By scheme (column 2): old-age versus widow pensions. (iii)
+What happens when the BPL card is controlled for (column 3) and within BPL
+households (column 4). (iv) Interpretation: say whether the pattern matches
+what the selection in Section~\ref{sec:who} predicts, and be explicit that it
+is consistent with selection rather than proof of it.}
+
+\subsection{Robustness and heterogeneity}
+
+\todo{One paragraph. The pension coefficient under survey weights,
+village-level clustering, the broader definition including expected pensions,
+without MPCE and household structure, and in a probit
+(Appendix Table~\ref{tab:robust}). Then heterogeneity by sex, urban residence,
+age 70+, and BPL status: cite the interaction terms and whether any is
+significant (Appendix Table~\ref{tab:het}).}
+
+%------------------------------------------------------------------------------
+\section{Interpreting the estimates}
+%------------------------------------------------------------------------------
+
+These estimates are conditional associations, not causal effects. Pension
+receipt is not randomly assigned: people qualify through their employment
+histories or through programme eligibility rules, so recipients may differ from
+non-recipients in ways the controls do not capture.
+
+\todo{About half a page, organised as signed biases. (i) Work-related
+pensions: lifetime formal employment brings higher income, financial literacy,
+and social networks that MPCE and schooling capture imperfectly; this positive
+selection pushes the coefficient toward lower depression among recipients.
+(ii) Social pensions: eligibility requires poverty or widowhood, both
+associated with depression, so negative selection pushes the coefficient
+toward higher depression. (iii) Health: poor health can lead both to earlier
+retirement, and hence pension receipt, and to depression. (iv) Measurement:
+the CIDI-SF is a screening instrument subject to stigma and recall, and
+misreported pension receipt attenuates the estimate. Close with two or three
+sentences on designs that could identify a causal effect: eligibility
+thresholds in age and BPL status, state variation in pension amounts as in
+\citet{Kaushal2014}, and later LASI waves.}
+
+%------------------------------------------------------------------------------
+\section{Conclusion}
+%------------------------------------------------------------------------------
+
+\todo{One or two paragraphs: the question; the pooled estimate and what it
+rules out; the opposite selection into the two kinds of pension and what the
+separate estimates show; the implication that cross-sectional comparisons of
+pension recipients cannot settle whether pensions improve mental health; and
+one sentence on the most promising route to a causal answer.}
+
+%------------------------------------------------------------------------------
+\begin{thebibliography}{10}
+%------------------------------------------------------------------------------
+
+\bibitem[Angrist and Pischke(2009)]{AngristPischke2009}
+Angrist, J.~D. and J.-S. Pischke (2009).
+\newblock \emph{Mostly Harmless Econometrics: An Empiricist's Companion}.
+\newblock Princeton, NJ: Princeton University Press.
+
+\bibitem[Case and Deaton(1998)]{CaseDeaton1998}
+Case, A. and A.~Deaton (1998).
+\newblock Large cash transfers to the elderly in {South Africa}.
+\newblock \emph{Economic Journal} 108(450), 1330--1361.
+
+\bibitem[Galiani et~al.(2016)Galiani, Gertler, and Bando]{GalianiGertlerBando2016}
+Galiani, S., P.~Gertler, and R.~Bando (2016).
+\newblock Non-contributory pensions.
+\newblock \emph{Labour Economics} 38, 47--58.
+
+\bibitem[{IIPS}(2020a)]{IIPS2020guide}
+International Institute for Population Sciences (2020a).
+\newblock \emph{Data User Guide: Longitudinal Ageing Study in India (LASI)
+Wave 1, 2017--18}.
+\newblock Mumbai: IIPS.
+
+\bibitem[{IIPS et~al.}(2020b)]{IIPS2020report}
+International Institute for Population Sciences, NPHCE, MoHFW, Harvard T.~H.
+Chan School of Public Health, and University of Southern California (2020b).
+\newblock \emph{Longitudinal Ageing Study in India (LASI) Wave 1, 2017--18,
+India Report}.
+\newblock Mumbai: IIPS.
+
+\bibitem[Kaushal(2014)]{Kaushal2014}
+Kaushal, N. (2014).
+\newblock How public pension affects elderly labor supply and well-being:
+Evidence from {India}.
+\newblock \emph{World Development} 56, 214--225.
+
+\bibitem[Kessler et~al.(1998)Kessler, Andrews, Mroczek, Ustun, and
+Wittchen]{Kessler1998}
+Kessler, R.~C., G.~Andrews, D.~Mroczek, B.~Ustun, and H.-U. Wittchen (1998).
+\newblock The {World Health Organization Composite International Diagnostic
+Interview} Short-Form ({CIDI-SF}).
+\newblock \emph{International Journal of Methods in Psychiatric Research}
+7(4), 171--185.
+
+\bibitem[Solon et~al.(2015)Solon, Haider, and Wooldridge]{SolonHaiderWooldridge2015}
+Solon, G., S.~J. Haider, and J.~M. Wooldridge (2015).
+\newblock What are we weighting for?
+\newblock \emph{Journal of Human Resources} 50(2), 301--316.
+
+\bibitem[Unnikrishnan and Imai(2020)]{UnnikrishnanImai2020}
+Unnikrishnan, V. and K.~S. Imai (2020).
+\newblock Does the old-age pension scheme improve household welfare?
+{Evidence} from {India}.
+\newblock \emph{World Development} 134.
+
+\end{thebibliography}
+
+%------------------------------------------------------------------------------
+\appendix
+%------------------------------------------------------------------------------
+
+\section{Additional tables}
+
+\input{tables/table4_robustness.tex}
+
+\input{tables/table5_heterogeneity.tex}
+
+\section{Variable construction}\label{app:construction}
+
+\paragraph{Depression (CIDI-SF).} Depressed-mood pathway (screen MH201,
+symptom items asked if the episode lasted most of the day, nearly every day,
+MH202--MH203): (1) loss of interest in most things (MH204); (2) fatigue or low
+energy (MH205); (3) loss or gain of appetite (MH206--MH207, counted once); (4)
+trouble concentrating (MH208); (5) feeling worthless (MH209); (6) thoughts of
+death (MH210); (7) trouble sleeping (MH211). Loss-of-interest pathway (screen
+MH214, criteria MH215--MH216): (1) fatigue or low energy (MH217); (2) loss of
+appetite (MH218); (3) trouble concentrating (MH219); (4) feeling worthless
+(MH220); (5) thoughts of death (MH221); (6) trouble sleeping (MH222).
+
+\paragraph{Pension receipt.} Work-related: WE412, ``Please tell me, whether
+you are currently receiving pension or expect to receive pension in future,''
+asked if the respondent currently works in or has retired from the organized
+sector (WE004 $= 1$ or WE402 $= 1$); 1 = currently receiving, 2 = expected in
+future, 3 = neither. Social: SW202, asked for each scheme the respondent is
+aware of (SW201 $= 1$): (a) National Old Age Pension Scheme; (b) widow pension
+(women only); (c) Annapurna (excluded, as it provides food grains); (d) and
+(e) other pension schemes.
+
+\paragraph{Ration card.} CO301 (household has a ration card) and CO302 (card
+type: BPL, Antyodaya, APL, or other), from the household questionnaire. The
+indicator equals one for BPL or Antyodaya cards and zero for APL, other, or no
+card.
+
+\end{document}
