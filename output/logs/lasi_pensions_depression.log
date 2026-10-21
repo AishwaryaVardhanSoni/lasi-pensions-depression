@@ -1,48 +1,40 @@
 -------------------------------------------------------------------------------------------------------------------
       name:  <unnamed>
-       log:  D:/Predoc_files/lasi-pensions-depression/output/logs/master.log
+       log:  D:/Predoc_files/lasi-pensions-depression/output/logs/lasi_pensions_depression.log
   log type:  text
- opened on:  10 Oct 2026, 01:56:43
+ opened on:  22 Oct 2026, 02:43:12
 
 . 
-. do "$root/code/01_sample.do"        // load data, keep people aged 60+
-
-. * =============================================================
-. * 01_sample.do
-. * Loads the LASI household and individual files, keeps only the
-. * variables I use, and keeps respondents aged 60 and above.
-. * =============================================================
 . 
-. * --- Household file: ration card questions (CO301, CO302) ---
-. * The household file has too many variables to open in full,
-. * so I load only the three I need.
+. ******** PART 1 - load the data, keep 60+ ********
+. 
+. * household file - only need the ration card questions (CO301, CO302)
+. * (the file has way too many variables to open in full)
 . use hhid co301 co302 using "$raw/2_LASI_W1_Household_data.dta", clear
 
-. isid hhid                        // check: one row per household
+. isid hhid  // one row per hh
 
 . save "$work/household.dta", replace
-(file D:/Predoc_files/data/work/household.dta not found)
 file D:/Predoc_files/data/work/household.dta saved
 
 . 
-. * --- Individual file ---
-. use prim_key hhid stateid residence living_arrangements mpce_quintile ///
->     indiaindividualweight dm003 dm005 dm006 dm007 dm010 dm013 dm021  ///
->     we412 sw202a sw202b sw202d sw202e                                 ///
->     mh201 mh204 mh205 mh206 mh207 mh208 mh209 mh210 mh211             ///
->     mh214 mh217 mh218 mh219 mh220 mh221 mh222                         ///
+. * individual file
+. use prim_key hhid stateid residence living_arrangements mpce_quintile indiaindividualweight ///
+>     dm003 dm005 dm006 dm007 dm010 dm013 dm021 we412 sw202a sw202b sw202d sw202e ///
+>     mh201 mh204 mh205 mh206 mh207 mh208 mh209 mh210 mh211 mh214 mh217 mh218 mh219 mh220 mh221 mh222 ///
 >     using "$raw/3_LASI_W1_Individual_data.dta", clear
 
+. *des
 . 
-. * Keep respondents aged 60+ (the age group asked about social pensions).
-. * Stata treats missing as a very large number, so I also drop missing age.
+. * 60+ only, since the social pension questions are only asked to them.
+. * stata treats missing age as a very large number so dropping missing too
 . keep if dm005 >= 60 & !missing(dm005)
 (40,786 observations deleted)
 
-. assert _N == 31464               // same number as in the LASI user guide
+. assert _N == 31464 // same as the LASI user guide
 
 . 
-. * Add the ration card questions from the household file
+. * merge in the ration card questions
 . merge m:1 hhid using "$work/household.dta", keep(master match)
 
     Result                      Number of obs
@@ -54,7 +46,7 @@ file D:/Predoc_files/data/work/household.dta saved
     Matched                            30,888  (_merge==3)
     -----------------------------------------
 
-. tab _merge                       // a few respondents have no household interview
+. tab _merge // a few people have no household interview
 
    Matching result from |
                   merge |      Freq.     Percent        Cum.
@@ -67,51 +59,33 @@ file D:/Predoc_files/data/work/household.dta saved
 . drop _merge
 
 . 
-. save "$work/sample60.dta", replace
-(file D:/Predoc_files/data/work/sample60.dta not found)
-file D:/Predoc_files/data/work/sample60.dta saved
-
 . 
-end of do-file
-
-. do "$root/code/02_variables.do"     // make outcome, pension and control variables
-
-. * =============================================================
-. * 02_variables.do
-. * Makes the depression outcome, the pension variables and the
-. * controls, then keeps the final sample.
-. * =============================================================
+. ******** PART 2 - depression, pensions, controls ********
 . 
-. use "$work/sample60.dta", clear
-
+. **** depression (CIDI-SF) ****
+. * LASI asks about depression in 2 parts:
+. *   sad mood (MH201). if yes and it lasted most of the day nearly every day, 7 symptoms are asked (MH204-MH211)
+. *   loss of interest (MH214). same idea, 6 symptoms (MH217-MH222)
+. * depressed = 3+ symptoms in either part. symptoms that weren't asked count as no
 . 
-. * -------------------------------------------------------------
-. * 1. Depression (CIDI-SF)
-. * -------------------------------------------------------------
-. * LASI asks about depression in two parts:
-. *  - Sad mood (MH201). If the person says yes, and it lasted most of
-. *    the day nearly every day, 7 symptoms are asked (MH204-MH211).
-. *  - Loss of interest (MH214). Same idea, 6 symptoms (MH217-MH222).
-. * Someone is depressed if they report 3+ symptoms in either part.
-. * Symptoms that were not asked count as "no".
-. 
-. * Count the "yes" answers (anycount counts how many variables equal 1)
+. * anycount = how many of these vars are equal to 1
 . egen n_mood = anycount(mh204 mh205 mh208 mh209 mh210 mh211), values(1)
 
-. replace n_mood = n_mood + 1 if mh206 == 1 | mh207 == 1   // appetite loss or gain = 1 symptom
+. replace n_mood = n_mood + 1 if mh206 == 1 | mh207 == 1 // appetite loss or gain = 1 symptom
 (1,863 real changes made)
 
 . egen n_interest = anycount(mh217 mh218 mh219 mh220 mh221 mh222), values(1)
 
+. *tab n_mood n_interest
 . 
 . gen depressed = 0
 
-. replace depressed = 1 if n_mood >= 3 | n_interest >= 3
+. replace depressed = 1 if n_mood>=3 | n_interest>=3
 (2,317 real changes made)
 
 . 
-. * People never asked the depression questions (probably proxy
-. * interviews) are set to missing rather than "not depressed"
+. * people who were never asked the depression questions (probably proxy interviews)
+. * -> missing, not "not depressed"
 . replace depressed = . if missing(mh201) & missing(mh214)
 (818 real changes made, 818 to missing)
 
@@ -127,54 +101,49 @@ end of do-file
 . assert r(N) == 2317
 
 . 
-. * Outcome x 100, so regression coefficients are in percentage points
-. gen dep100 = 100 * depressed
+. * x100 so the regression coefficients are in percentage points
+. gen dep100 = 100*depressed
 (818 missing values generated)
 
 . 
-. * -------------------------------------------------------------
-. * 2. Pensions
-. * -------------------------------------------------------------
-. * Work pension, WE412: 1 = receiving now, 2 = expects one later, 3 = neither.
-. * Only asked of people who worked in the organised sector; everyone else gets 0.
-. gen work_pen = (we412 == 1)
+. **** pensions ****
+. * work pension, WE412: 1 = getting it now, 2 = expects one later, 3 = neither
+. * only asked to people who worked in the organised sector, everyone else gets 0
+. gen work_pen = (we412==1)
 
-. gen work_pen_future = (we412 == 2)
+. gen work_pen_future = (we412==2)
 
 . 
-. * Social pensions, SW202 ("are you availing this scheme?", 1 = yes):
-. *   a = National Old Age Pension (needs a BPL card)
-. *   b = widow pension
-. *   d, e = other pension schemes
-. * (c = Annapurna gives food grains, not cash, so I leave it out)
+. * social pensions, SW202 ("are you availing this scheme?", 1 = yes)
+. *   a = national old age pension (needs a BPL card), b = widow pension, d and e = other schemes
+. * c is Annapurna which gives food grains not cash, so leaving it out
 . gen oldage_pen = (sw202a == 1)
 
-. gen widow_pen  = (sw202b == 1)
+. gen widow_pen = (sw202b == 1)
 
-. gen other_pen  = (sw202d == 1 | sw202e == 1)
+. gen other_pen = (sw202d == 1 | sw202e == 1)
 
 . gen social_pen = (oldage_pen == 1 | widow_pen == 1 | other_pen == 1)
 
 . 
-. * Main variable: currently receives any pension
+. * main variable - currently receives any pension
 . gen any_pen = (work_pen == 1 | social_pen == 1)
 
 . 
-. * Broader version for a robustness check: also counts expected work pensions
+. * broader one for a robustness check (also counts expected work pensions)
 . gen any_pen_broad = (any_pen == 1 | work_pen_future == 1)
 
+. *tab any_pen any_pen_broad
 . 
-. * -------------------------------------------------------------
-. * 3. Controls
-. * -------------------------------------------------------------
-. gen age    = dm005
+. **** controls ****
+. gen age = dm005
 
 . gen female = (dm003 == 2)
 
-. gen urban  = (residence == 2)
+. gen urban = (residence == 2)
 
 . 
-. * Years of schooling (0 for people who never went to school, DM006 = 2)
+. * years of schooling, 0 for people who never went to school (DM006 = 2)
 . gen schooling = dm007
 (16,889 missing values generated)
 
@@ -182,12 +151,10 @@ end of do-file
 (16,889 real changes made)
 
 . 
-. * Household structure: marital status (DM021) combined with who the
-. * person lives with. I combine them because no widowed person lives
-. * with a spouse, so the two variables can't be separated.
-. *   DM021: 1 married, 2 widowed, 3-7 divorced/separated/never married etc.
-. *   living_arrangements: 1 alone, 2 spouse only, 3 spouse and children,
-. *                        4 children only, 5 others
+. * household structure = marital status (DM021) combined with who they live with.
+. * combining them because no widowed person lives with a spouse, so the two can't be separated
+. *  DM021: 1 married, 2 widowed, 3-7 divorced/separated/never married etc
+. *  living_arrangements: 1 alone, 2 spouse only, 3 spouse and children, 4 children only, 5 others
 . gen hhstruct = .
 (31,464 missing values generated)
 
@@ -212,15 +179,15 @@ end of do-file
 . replace hhstruct = 7 if dm021 >= 3 & dm021 <= 7
 (825 real changes made)
 
+. *tab hhstruct, m
 . 
-. label define hhstruct_lbl 1 "Married, spouse only" 2 "Married, spouse and children" ///
->     3 "Married, spouse away" 4 "Widowed, alone" 5 "Widowed, with children"        ///
->     6 "Widowed, with others" 7 "Other unmarried"
+. label define hhstruct_lbl 1 "Married, spouse only" 2 "Married, spouse and children" 3 "Married, spouse away" ///
+>     4 "Widowed, alone" 5 "Widowed, with children" 6 "Widowed, with others" 7 "Other unmarried"
 
 . label values hhstruct hhstruct_lbl
 
 . 
-. * Religion: Hindu, Muslim, Christian, Sikh, Other (small groups combined)
+. * religion: hindu, muslim, christian, sikh, other (the small groups put together)
 . gen religion = 5
 
 . replace religion = 1 if dm010 == 2
@@ -239,11 +206,10 @@ end of do-file
 (1 real change made, 1 to missing)
 
 . 
-. * Caste is DM013: 1 SC, 2 ST, 3 OBC, 4 none of these (used as is)
+. * caste = DM013 as it is (1 SC, 2 ST, 3 OBC, 4 none of these)
 . 
 . * BPL or Antyodaya ration card, from the household file
-. *   CO301: has a ration card (1 yes, 2 no)
-. *   CO302: card type (1 BPL, 2 Antyodaya, 3 APL, 4 other)
+. * CO301 = has a ration card (1 yes, 2 no), CO302 = card type (1 BPL, 2 Antyodaya, 3 APL, 4 other)
 . gen bpl = .
 (31,464 missing values generated)
 
@@ -254,94 +220,80 @@ end of do-file
 (14,615 real changes made)
 
 . 
-. * Simple yes/no variables for the descriptive table
-. gen widowed   = (dm021 == 2)
+. * 0/1 variables for table 1
+. gen widowed = (dm021 == 2)
 
-. gen alone     = (living_arrangements == 1)
+. gen alone = (living_arrangements == 1)
 
-. gen sc        = (dm013 == 1) if !missing(dm013)
+. gen sc = (dm013 == 1) if !missing(dm013)
 (1,047 missing values generated)
 
-. gen st        = (dm013 == 2) if !missing(dm013)
+. gen st = (dm013 == 2) if !missing(dm013)
 (1,047 missing values generated)
 
 . gen poor_mpce = (mpce_quintile <= 2)
 
 . 
-. * Village or urban ward, for clustering: the first 7 digits of hhid
-. * (wave, state, village/ward)
+. * village/urban ward for clustering = first 7 digits of hhid (wave, state, village/ward)
 . gen village = substr(hhid, 1, 7)
 
 . 
-. * -------------------------------------------------------------
-. * 4. Final sample: drop anyone missing the outcome or a control
-. * -------------------------------------------------------------
-. drop if missing(depressed, age, female, hhstruct, urban, schooling, ///
->                 dm013, religion, mpce_quintile, stateid)
+. **** final sample: drop anyone missing the outcome or a control ****
+. drop if missing(depressed, age, female, hhstruct, urban, schooling, dm013, religion, mpce_quintile, stateid)
 (1,837 observations deleted)
 
 . assert _N == 29627
 
 . 
-. * Labels (these become the row names in the tables)
-. label var depressed  "Depressed (CIDI-SF)"
+. * labels (these end up as the row names in the tables)
+. label var depressed "Depressed (CIDI-SF)"
 
-. label var any_pen    "Receives any pension"
+. label var any_pen "Receives any pension"
 
-. label var work_pen   "Work-related pension"
+. label var work_pen "Work-related pension"
 
 . label var social_pen "Social pension"
 
 . label var oldage_pen "National old-age pension"
 
-. label var widow_pen  "Widow pension"
+. label var widow_pen "Widow pension"
 
-. label var other_pen  "Other social pension"
+. label var other_pen "Other social pension"
 
-. label var bpl        "BPL or Antyodaya card"
+. label var bpl "BPL or Antyodaya card"
 
-. label var age        "Age (years)"
+. label var age "Age (years)"
 
-. label var female     "Female"
+. label var female "Female"
 
-. label var widowed    "Widowed"
+. label var widowed "Widowed"
 
-. label var alone      "Lives alone"
+. label var alone "Lives alone"
 
-. label var urban      "Urban"
+. label var urban "Urban"
 
-. label var schooling  "Years of schooling"
+. label var schooling "Years of schooling"
 
-. label var sc         "Scheduled Caste"
+. label var sc "Scheduled Caste"
 
-. label var st         "Scheduled Tribe"
+. label var st "Scheduled Tribe"
 
-. label var poor_mpce  "Bottom two MPCE quintiles"
+. label var poor_mpce "Bottom two MPCE quintiles"
 
 . 
+. * saving the clean data, part 4 starts from this
 . save "$work/analysis.dta", replace
-(file D:/Predoc_files/data/work/analysis.dta not found)
 file D:/Predoc_files/data/work/analysis.dta saved
 
 . 
-end of do-file
-
-. do "$root/code/03_descriptives.do"  // Table 1
-
-. * =============================================================
-. * 03_descriptives.do
-. * Table 1: average characteristics by pension status.
-. * Means use the LASI survey weights.
-. * =============================================================
 . 
-. use "$work/analysis.dta", clear
+. ******** PART 3 - table 1, characteristics by pension status (means use the LASI survey weights) ********
+. 
+. global tab1vars depressed any_pen work_pen social_pen age female widowed alone urban schooling sc st bpl poor_mpc
+> e
 
 . 
-. global tab1vars depressed any_pen work_pen social_pen age female widowed ///
->                 alone urban schooling sc st bpl poor_mpce
-
-. 
-. * One column per group
+. * one column per group
 . eststo clear
 
 . eststo: estpost summarize $tab1vars [aw = indiaindividualweight]
@@ -364,7 +316,7 @@ end of do-file
    poor_mpce |     29627   1.13e+08    .435166   .2458049   .4957871          0          1   4.90e+07 
 (est1 stored)
 
-. eststo: estpost summarize $tab1vars if any_pen == 0    [aw = indiaindividualweight]
+. eststo: estpost summarize $tab1vars if any_pen == 0 [aw = indiaindividualweight]
 
              |  e(count)   e(sum_w)    e(mean)     e(Var)      e(sd)     e(min)     e(max)     e(sum) 
 -------------+----------------------------------------------------------------------------------------
@@ -384,7 +336,7 @@ end of do-file
    poor_mpce |     18118   7.36e+07   .4276009   .2447719   .4947443          0          1   3.15e+07 
 (est2 stored)
 
-. eststo: estpost summarize $tab1vars if work_pen == 1   [aw = indiaindividualweight]
+. eststo: estpost summarize $tab1vars if work_pen == 1 [aw = indiaindividualweight]
 
              |  e(count)   e(sum_w)    e(mean)     e(Var)      e(sd)     e(min)     e(max)     e(sum) 
 -------------+----------------------------------------------------------------------------------------
@@ -425,17 +377,16 @@ end of do-file
 (est4 stored)
 
 . 
-. esttab using "$root/output/tables/table1_descriptives.tex", replace ///
->     booktabs label nonumbers cells("mean(fmt(3))") collabels(none)   ///
->     mtitles("All" "No pension" "Work pension" "Social pension")     ///
->     stats(N, fmt(%9.0fc) labels("Observations"))                    ///
+. esttab using "$root/output/tables/table1_descriptives.tex", replace booktabs label nonumbers cells("mean(fmt(3))"
+> ) collabels(none) ///
+>     mtitles("All" "No pension" "Work pension" "Social pension") stats(N, fmt(%9.0fc) labels("Observations")) ///
 >     title("Characteristics of respondents aged 60+ by pension status\label{tab:desc}") ///
 >     addnotes("Means weighted by LASI national individual weights; observations unweighted." ///
->              "Work- and social-pension columns overlap for respondents receiving both.")
+>     "Work- and social-pension columns overlap for respondents receiving both.")
 (output written to D:/Predoc_files/lasi-pensions-depression/output/tables/table1_descriptives.tex)
 
 . 
-. * Depression rate for the text: unweighted, then weighted
+. * depression rate for the text, unweighted and then weighted
 . sum depressed
 
     Variable |        Obs        Mean    Std. dev.       Min        Max
@@ -449,38 +400,29 @@ end of do-file
    depressed |  29,627   112638440    .0920731    .289134          0          1
 
 . 
-end of do-file
-
-. do "$root/code/04_regressions.do"   // Tables 2-5 and Figure 1
-
-. * =============================================================
-. * 04_regressions.do
-. * Linear probability models of depression on pension receipt.
-. * Outcome is depressed x 100, so coefficients are percentage points.
-. * Several people are interviewed per household, so standard errors
-. * are clustered by household (hhid).
-. * =============================================================
 . 
+. ******** PART 4 - regressions ********
+. * LPMs of depression on pension receipt. outcome = depressed x 100 so coefficients are in pp
+. * several people per household get interviewed -> SEs clustered by household (hhid)
+. 
+. * reload the clean data before the regressions
 . use "$work/analysis.dta", clear
 
 . 
-. * --- Control variables ---
-. * c. = continuous, i. = categories, ib2. = category 2 is the base group
-. * c.age##c.age = age and age squared
-. global demo  "c.age##c.age i.female ib2.hhstruct"         // base: married, spouse and children
+. * controls
+. * c. = continuous, i. = categorical, ib2. = category 2 is the base. c.age##c.age gives age and age squared
+. global demo "c.age##c.age i.female ib2.hhstruct"  // base: married, spouse and children
 
-. global ses   "i.urban c.schooling ib3.dm013 i.religion"   // base: rural, OBC, Hindu
+. global ses "i.urban c.schooling ib3.dm013 i.religion" // base: rural, OBC, hindu
 
-. global mpce  "i.mpce_quintile"                             // base: poorest quintile
+. global mpce "i.mpce_quintile" // base = poorest quintile
 
 . global state "i.stateid"
 
-. global all   "$demo $ses $mpce $state"
+. global all "$demo $ses $mpce $state"
 
 . 
-. * -------------------------------------------------------------
-. * Table 2: adding controls step by step
-. * -------------------------------------------------------------
+. ********** TABLE 2 - adding the controls one group at a time **********
 . eststo clear
 
 . eststo m1: reg dep100 any_pen, vce(cluster hhid)
@@ -715,42 +657,39 @@ Andaman & Nicobar Islands  |  -4.674012   1.352628    -3.46   0.001    -7.325255
 --------------------------------------------------------------------------------------------
 
 . 
-. * Yes/No rows showing which controls each column has
-. estadd local demo  "No"  : m1
+. * yes/no rows for which controls are in each column
+. estadd local demo "No" : m1
 
-. estadd local demo  "Yes" : m2 m3 m4 m5
+. estadd local demo "Yes" : m2 m3 m4 m5
 
-. estadd local ses   "No"  : m1 m2
+. estadd local ses "No" : m1 m2
 
-. estadd local ses   "Yes" : m3 m4 m5
+. estadd local ses "Yes" : m3 m4 m5
 
-. estadd local mpce  "No"  : m1 m2 m3
+. estadd local mpce "No" : m1 m2 m3
 
-. estadd local mpce  "Yes" : m4 m5
+. estadd local mpce "Yes" : m4 m5
 
-. estadd local state "No"  : m1 m2 m3 m4
+. estadd local state "No" : m1 m2 m3 m4
 
 . estadd local state "Yes" : m5
 
-. estadd ysumm : m1 m2 m3 m4 m5       // adds the mean of the outcome
+. estadd ysumm : m1 m2 m3 m4 m5 // mean of the outcome
 
 . 
-. esttab m1 m2 m3 m4 m5 using "$root/output/tables/table2_main.tex", replace ///
->     booktabs label nomtitles keep(any_pen) b(2) se(2)                     ///
->     star(* 0.10 ** 0.05 *** 0.01)                                         ///
->     stats(demo ses mpce state ymean N r2, fmt(0 0 0 0 2 %9.0fc 3)         ///
->           labels("Age, sex, household structure" "Urban, schooling, caste, religion" ///
->                  "MPCE quintiles" "State fixed effects"                   ///
->                  "Mean of outcome" "Observations" "R-squared"))           ///
->     title("Pension receipt and depression\label{tab:main}")              ///
+. esttab m1 m2 m3 m4 m5 using "$root/output/tables/table2_main.tex", replace booktabs label nomtitles keep(any_pen)
+>  b(2) se(2) ///
+>     star(* 0.10 ** 0.05 *** 0.01) stats(demo ses mpce state ymean N r2, fmt(0 0 0 0 2 %9.0fc 3) ///
+>     labels("Age, sex, household structure" "Urban, schooling, caste, religion" "MPCE quintiles" "State fixed effe
+> cts" ///
+>     "Mean of outcome" "Observations" "R-squared")) ///
+>     title("Pension receipt and depression\label{tab:main}") ///
 >     addnotes("Linear probability models. The outcome is depressed (CIDI-SF) x 100," ///
->              "so coefficients are in percentage points. Standard errors clustered by household.")
+>     "so coefficients are in percentage points. Standard errors clustered by household.")
 (output written to D:/Predoc_files/lasi-pensions-depression/output/tables/table2_main.tex)
 
 . 
-. * -------------------------------------------------------------
-. * Table 3: work vs. social pensions, and the BPL card
-. * -------------------------------------------------------------
+. ********** TABLE 3 - work vs social pensions + the BPL card **********
 . eststo t1: reg dep100 work_pen social_pen $all, vce(cluster hhid)
 
 Linear regression                               Number of obs     =     29,627
@@ -1110,21 +1049,19 @@ Andaman & Nicobar Islands  |  -4.384741   2.214913    -1.98   0.048    -8.726335
 
 . 
 . esttab t1 t2 t3 t4 using "$root/output/tables/table3_pension_type.tex", replace ///
->     booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)                    ///
->     keep(work_pen social_pen oldage_pen widow_pen other_pen bpl)              ///
->     order(work_pen social_pen oldage_pen widow_pen other_pen bpl)             ///
->     mtitles("By type" "By scheme" "BPL control" "BPL households")             ///
+>     booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01) keep(work_pen social_pen oldage_pen widow_pen other_p
+> en bpl) ///
+>     order(work_pen social_pen oldage_pen widow_pen other_pen bpl) ///
+>     mtitles("By type" "By scheme" "BPL control" "BPL households") ///
 >     stats(ymean N r2, fmt(2 %9.0fc 3) labels("Mean of outcome" "Observations" "R-squared")) ///
->     title("Work-related and social pensions\label{tab:type}")                ///
+>     title("Work-related and social pensions\label{tab:type}") ///
 >     addnotes("All columns include the controls and state fixed effects of Table 2, column 5." ///
->              "Outcome x 100. Standard errors clustered by household.")
+>     "Outcome x 100. Standard errors clustered by household.")
 (output written to D:/Predoc_files/lasi-pensions-depression/output/tables/table3_pension_type.tex)
 
 . 
-. * -------------------------------------------------------------
-. * Table 4 (appendix): robustness checks on the main estimate
-. * -------------------------------------------------------------
-. * (2) with LASI survey weights
+. ********** TABLE 4 (appendix) - robustness of the main estimate **********
+. * col 2: with the LASI survey weights
 . eststo r2: reg dep100 any_pen $all [pw = indiaindividualweight], vce(cluster hhid)
 (sum of wgt is 112,638,439.72628)
 
@@ -1213,7 +1150,7 @@ Andaman & Nicobar Islands  |  -5.202194   1.660276    -3.13   0.002     -8.45645
                      _cons |   29.52282   20.24023     1.46   0.145    -10.14942    69.19506
 --------------------------------------------------------------------------------------------
 
-. * (3) standard errors clustered by village/ward instead of household
+. * col 3: SEs clustered by village/ward instead of household
 . eststo r3: reg dep100 any_pen $all, vce(cluster village)
 
 Linear regression                               Number of obs     =     29,627
@@ -1301,7 +1238,7 @@ Andaman & Nicobar Islands  |  -4.674012   1.796589    -2.60   0.009    -8.197057
                      _cons |   8.710797    11.0155     0.79   0.429     -12.8902     30.3118
 --------------------------------------------------------------------------------------------
 
-. * (4) broader pension definition (adds expected work pensions)
+. * col 4: broader pension definition (+ expected work pensions)
 . eststo r4: reg dep100 any_pen_broad $all, vce(cluster hhid)
 
 Linear regression                               Number of obs     =     29,627
@@ -1389,7 +1326,7 @@ Andaman & Nicobar Islands  |   -4.67308   1.352784    -3.45   0.001    -7.324628
                      _cons |   8.397396   10.81266     0.78   0.437    -12.79615    29.59094
 --------------------------------------------------------------------------------------------
 
-. * (5) without MPCE and household structure, which pensions might affect
+. * col 5: no MPCE and no household structure, since pensions might affect those
 . eststo r5: reg dep100 any_pen c.age##c.age i.female $ses $state, vce(cluster hhid)
 
 Linear regression                               Number of obs     =     29,627
@@ -1462,8 +1399,7 @@ Andaman & Nicobar Islands  |  -4.844595    1.34573    -3.60   0.000    -7.482317
                      _cons |   4.732071   10.80592     0.44   0.661    -16.44827    25.91241
 --------------------------------------------------------------------------------------------
 
-. * (6) probit instead of OLS; margins gives the average effect of a pension,
-. *     multiplied by 100 to match the other columns
+. * col 6: probit instead of OLS. margins gives the average effect of a pension, x100 to match the other cols
 . probit depressed i.any_pen $all, vce(cluster hhid)
 
 Iteration 0:   log pseudolikelihood = -7964.7631  
@@ -1573,24 +1509,22 @@ dy/dx wrt:  1.any_pen
 Note: dy/dx for factor levels is the discrete change from the base level.
 
 . 
-. * rename() puts all six estimates on one row
+. * rename() puts all 6 estimates on the same row
 . esttab m5 r2 r3 r4 r5 r6 using "$root/output/tables/table4_robustness.tex", replace ///
->     booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)        ///
->     rename(any_pen_broad any_pen 1.any_pen any_pen) keep(any_pen)   ///
->     mtitles("Preferred" "Weighted" "Village SE" "Broad" "Lean" "Probit") ///
->     stats(N, fmt(%9.0fc) labels("Observations"))                    ///
+>     booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01) rename(any_pen_broad any_pen 1.any_pen any_pen) keep(
+> any_pen) ///
+>     mtitles("Preferred" "Weighted" "Village SE" "Broad" "Lean" "Probit") stats(N, fmt(%9.0fc) labels("Observation
+> s")) ///
 >     title("Robustness of the pension coefficient\label{tab:robust}") ///
 >     addnotes("(1) Table 2, column 5. (2) LASI national weights. (3) Clustered by village/ward." ///
->              "(4) Adds expected work-related pensions. (5) Drops MPCE and household structure." ///
->              "(6) Probit average marginal effect. Coefficients in percentage points.")
+>     "(4) Adds expected work-related pensions. (5) Drops MPCE and household structure." ///
+>     "(6) Probit average marginal effect. Coefficients in percentage points.")
 (output written to D:/Predoc_files/lasi-pensions-depression/output/tables/table4_robustness.tex)
 
 . 
-. * -------------------------------------------------------------
-. * Table 5 (appendix): does the pension estimate differ by group?
-. * -------------------------------------------------------------
-. * pen_x_group = pension x group. Its coefficient is the extra
-. * difference for that group; its p-value tests whether groups differ.
+. ********** TABLE 5 (appendix) - does the pension estimate differ by group? **********
+. * pen_x_group = pension x group. its coefficient is the extra difference for that group,
+. * and its p value tests whether the groups are different
 . gen pen_x_group = any_pen * female
 
 . eststo h1: reg dep100 any_pen pen_x_group $all, vce(cluster hhid)
@@ -1961,39 +1895,32 @@ Andaman & Nicobar Islands  |  -4.161491   1.369145    -3.04   0.002    -6.845111
                      _cons |   5.034203   10.93818     0.46   0.645     -16.4054    26.47381
 --------------------------------------------------------------------------------------------
 
+. *sum pen_x_group
 . 
 . label var pen_x_group "Pension x group"
 
 . 
 . esttab h1 h2 h3 h4 using "$root/output/tables/table5_heterogeneity.tex", replace ///
->     booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01)       ///
->     keep(any_pen pen_x_group)                                      ///
->     mtitles("Women" "Urban" "Aged 70+" "BPL card")                 ///
->     stats(N, fmt(%9.0fc) labels("Observations"))                   ///
+>     booktabs label b(2) se(2) star(* 0.10 ** 0.05 *** 0.01) keep(any_pen pen_x_group) ///
+>     mtitles("Women" "Urban" "Aged 70+" "BPL card") stats(N, fmt(%9.0fc) labels("Observations")) ///
 >     title("Heterogeneity in the pension coefficient\label{tab:het}") ///
 >     addnotes("Group in column heading interacted with pension receipt; full controls as in Table 2, column 5.")
 (output written to D:/Predoc_files/lasi-pensions-depression/output/tables/table5_heterogeneity.tex)
 
 . 
-. * -------------------------------------------------------------
-. * Figure 1: pension estimates with 95% confidence intervals
-. * -------------------------------------------------------------
+. ********** FIGURE 1 - pension estimates with 95% CIs **********
 . coefplot (m5, keep(any_pen)) (t2, keep(work_pen oldage_pen widow_pen other_pen)), ///
->     xline(0, lpattern(dash) lcolor(gs8)) nooffsets legend(off)        ///
->     mcolor(black) ciopts(lcolor(black))                                ///
->     coeflabels(any_pen = "Any pension" work_pen = "Work-related pension" ///
->                oldage_pen = "National old-age pension"                ///
->                widow_pen = "Widow pension" other_pen = "Other social pension") ///
->     xtitle("Difference in depression prevalence (percentage points)") ///
->     graphregion(color(white))
+>     xline(0, lpattern(dash) lcolor(gs8)) nooffsets legend(off) mcolor(black) ciopts(lcolor(black)) ///
+>     coeflabels(any_pen = "Any pension" work_pen = "Work-related pension" oldage_pen = "National old-age pension" 
+> ///
+>     widow_pen = "Widow pension" other_pen = "Other social pension") ///
+>     xtitle("Difference in depression prevalence (percentage points)") graphregion(color(white))
 
 . graph export "$root/output/figures/figure1_coefplot.pdf", replace
 file D:/Predoc_files/lasi-pensions-depression/output/figures/figure1_coefplot.pdf saved as PDF format
 
 . 
-. * -------------------------------------------------------------
-. * Numbers quoted in the paper (estimates and 95% confidence intervals)
-. * -------------------------------------------------------------
+. * numbers quoted in the paper (estimates + 95% CIs)
 . est restore m5
 (results m5 are active now)
 
@@ -2030,7 +1957,7 @@ file D:/Predoc_files/lasi-pensions-depression/output/figures/figure1_coefplot.pd
          (1) |   .7009531   .3922615     1.79   0.074    -.0679063    1.469812
 ------------------------------------------------------------------------------
 
-. lincom work_pen - social_pen     // are the two pension types different?
+. lincom work_pen - social_pen // are the 2 pension types different?
 
  ( 1)  work_pen - social_pen = 0
 
@@ -2041,12 +1968,9 @@ file D:/Predoc_files/lasi-pensions-depression/output/figures/figure1_coefplot.pd
 ------------------------------------------------------------------------------
 
 . 
-end of do-file
-
-. 
 . log close
       name:  <unnamed>
-       log:  D:/Predoc_files/lasi-pensions-depression/output/logs/master.log
+       log:  D:/Predoc_files/lasi-pensions-depression/output/logs/lasi_pensions_depression.log
   log type:  text
- closed on:  10 Oct 2026, 01:57:13
+ closed on:  22 Oct 2026, 02:43:52
 -------------------------------------------------------------------------------------------------------------------
